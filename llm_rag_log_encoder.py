@@ -15,6 +15,7 @@ import time
 from llama_index.core import VectorStoreIndex, Document, StorageContext, ServiceContext, Settings
 from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from app.model.llm_utils import create_llm, create_embedding_model
 # ...
 # global constants
 MODEL_DIRECTORY = "/srv/app/model/data/"
@@ -93,6 +94,13 @@ def apply(model,df,param):
         return pd.DataFrame(data=result_dict)
 
     try:
+        service = param['options']['params']['embedder_service'].strip('\"')
+        print(f"Using {service} embedding service")
+    except:
+        service = "huggingface"
+        print("Using default Huggingface embedding service")
+        
+    try:
         use_local= int(param['options']['params']['use_local'])
     except:
         use_local=0
@@ -103,34 +111,55 @@ def apply(model,df,param):
         data = None
         result_dict["message"] = ["Failed to preprocess data. Please specify a label_field_name parameter for the field to encode."]
         return pd.DataFrame(data=result_dict)
-    
+
     try:
-        embedder_name = param['options']['params']['embedder_name'].strip('\"')
+        embedder_dimension = int(param['options']['params']['embedder_dimension'])
     except:
-        embedder_name = 'all-MiniLM-L6-v2'
-
-    if embedder_name == 'intfloat/multilingual-e5-large':
-        embedder_dimension = 1024
-    elif embedder_name == 'all-MiniLM-L6-v2':
         embedder_dimension = 384
-    else:
+        print("embedder_dimension not specified. Use 384 by default.")
+    
+    if service == "huggingface" or service == "ollama":
         try:
-            embedder_dimension=int(param['options']['params']['embedder_dimension'])
+            embedder_name = param['options']['params']['embedder_name'].strip('\"')
         except:
-            embedder_dimension=384
-            
-    if use_local:
-        embedder_name = f'/srv/app/model/data/{embedder_name}'
-        print("Using local embedding model checkpoints")  
+            embedder_name = 'all-MiniLM-L6-v2'
+            print("embedder_name not specified. Use all-MiniLM-L6-v2 by default.")
+
+        try:
+            use_local = int(param['options']['params']['use_local'])
+        except:
+            use_local = 0
+            print("download Huggingface embedder model by default.")
+
+        # Dimension checking for default embedders
+        if embedder_name == 'intfloat/multilingual-e5-large':
+            embedder_dimension = 1024
+        elif embedder_name == 'all-MiniLM-L6-v2':
+            embedder_dimension = 384
+        else:
+            embedder_dimension = int(embedder_dimension)
+         
+        # Using local embedder checkpoints
+        if service == "huggingface" and use_local:
+            embedder_name = f'/srv/app/model/data/{embedder_name}'
+            print("Using local embedding model checkpoints")  
 
     try:
-        transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
-        result_dict["embedder_Info"] = [str(transformer_embedder)]
+        if service == "huggingface" or service == "ollama":
+            embedder, m = create_embedding_model(service=service, model=embedder_name)
+        else:
+            embedder, m = create_embedding_model(service=service)
+
+        if embedder is not None:
+            result_dict["embedder_Info"] = [m]
+        else:
+            message = f"ERROR in embedding model loading: {m}. "
+            result_dict["message"] = [m]
+            return pd.DataFrame(data=result_dict)
     except Exception as e:
         m = f"Failed to initiate embedding model. ERROR: {e}"
         result_dict["message"] = [m]
         return pd.DataFrame(data=result_dict)
-
 
     try:
         df=df.copy()
@@ -154,13 +183,13 @@ def apply(model,df,param):
         result_dict["message"] = f"Failed at data preprocessing. ERROR:{e}"
         return pd.DataFrame(data=result_dict)
 
-    if (documents is None) or (transformer_embedder is None):
-        result_dict["message"] = f"Failed to load input data or embedding model. Input data:{documents}, Embedding model:{transformer_embedder}"
+    if (documents is None) or (embedder is None):
+        result_dict["message"] = f"Failed to load input data or embedding model. Input data:{documents}, Embedding model:{embedder}"
         return pd.DataFrame(data=result_dict)
         
     try:
         Settings.llm = None
-        Settings.embed_model = transformer_embedder
+        Settings.embed_model = embedder
         # similarity_metric set to default value: IP (inner-product)
         vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
@@ -170,7 +199,7 @@ def apply(model,df,param):
         )
 
         result_dict["message"] = "Success"
-        result_dict["embedder_Info"] = [str(transformer_embedder)]
+        result_dict["embedder_Info"] = [m]
         result_dict["vector_Store_Info"] = [str(vector_store)]
 
     except Exception as e:
@@ -229,6 +258,13 @@ def compute(model,df,param):
         return pd.DataFrame(data=result_dict)
 
     try:
+        service = param['options']['params']['embedder_service'].strip('\"')
+        print(f"Using {service} embedding service")
+    except:
+        service = "huggingface"
+        print("Using default Huggingface embedding service")
+        
+    try:
         use_local= int(param['options']['params']['use_local'])
     except:
         use_local=0
@@ -239,34 +275,55 @@ def compute(model,df,param):
         data = None
         result_dict["message"] = ["Failed to preprocess data. Please specify a label_field_name parameter for the field to encode."]
         return pd.DataFrame(data=result_dict)
-    
+
     try:
-        embedder_name = param['options']['params']['embedder_name'].strip('\"')
+        embedder_dimension = int(param['options']['params']['embedder_dimension'])
     except:
-        embedder_name = 'all-MiniLM-L6-v2'
-
-    if embedder_name == 'intfloat/multilingual-e5-large':
-        embedder_dimension = 1024
-    elif embedder_name == 'all-MiniLM-L6-v2':
         embedder_dimension = 384
-    else:
+        print("embedder_dimension not specified. Use 384 by default.")
+    
+    if service == "huggingface" or service == "ollama":
         try:
-            embedder_dimension=int(param['options']['params']['embedder_dimension'])
+            embedder_name = param['options']['params']['embedder_name'].strip('\"')
         except:
-            embedder_dimension=384
-            
-    if use_local:
-        embedder_name = f'/srv/app/model/data/{embedder_name}'
-        print("Using local embedding model checkpoints")  
+            embedder_name = 'all-MiniLM-L6-v2'
+            print("embedder_name not specified. Use all-MiniLM-L6-v2 by default.")
+
+        try:
+            use_local = int(param['options']['params']['use_local'])
+        except:
+            use_local = 0
+            print("download Huggingface embedder model by default.")
+
+        # Dimension checking for default embedders
+        if embedder_name == 'intfloat/multilingual-e5-large':
+            embedder_dimension = 1024
+        elif embedder_name == 'all-MiniLM-L6-v2':
+            embedder_dimension = 384
+        else:
+            embedder_dimension = int(embedder_dimension)
+         
+        # Using local embedder checkpoints
+        if service == "huggingface" and use_local:
+            embedder_name = f'/srv/app/model/data/{embedder_name}'
+            print("Using local embedding model checkpoints")  
 
     try:
-        transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
-        result_dict["embedder_Info"] = [str(transformer_embedder)]
+        if service == "huggingface" or service == "ollama":
+            embedder, m = create_embedding_model(service=service, model=embedder_name)
+        else:
+            embedder, m = create_embedding_model(service=service)
+
+        if embedder is not None:
+            result_dict["embedder_Info"] = [m]
+        else:
+            message = f"ERROR in embedding model loading: {m}. "
+            result_dict["message"] = [m]
+            return pd.DataFrame(data=result_dict)
     except Exception as e:
         m = f"Failed to initiate embedding model. ERROR: {e}"
         result_dict["message"] = [m]
         return pd.DataFrame(data=result_dict)
-
 
     try:
         df=df.copy()
@@ -290,13 +347,13 @@ def compute(model,df,param):
         result_dict["message"] = f"Failed at data preprocessing. ERROR:{e}"
         return pd.DataFrame(data=result_dict)
 
-    if (documents is None) or (transformer_embedder is None):
-        result_dict["message"] = f"Failed to load input data or embedding model. Input data:{documents}, Embedding model:{transformer_embedder}"
+    if (documents is None) or (embedder is None):
+        result_dict["message"] = f"Failed to load input data or embedding model. Input data:{documents}, Embedding model:{embedder}"
         return pd.DataFrame(data=result_dict)
         
     try:
         Settings.llm = None
-        Settings.embed_model = transformer_embedder
+        Settings.embed_model = embedder
         # similarity_metric set to default value: IP (inner-product)
         vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
@@ -306,7 +363,7 @@ def compute(model,df,param):
         )
 
         result_dict["message"] = "Success"
-        result_dict["embedder_Info"] = [str(transformer_embedder)]
+        result_dict["embedder_Info"] = [m]
         result_dict["vector_Store_Info"] = [str(vector_store)]
 
     except Exception as e:
