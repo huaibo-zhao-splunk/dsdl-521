@@ -102,7 +102,7 @@ def apply(model,df,param):
         return returns
 
     try:
-        service = param['options']['params']['service'].strip("\"")
+        service = param['options']['params']['llm_service'].strip("\"")
         print(f"Using {service} LLM service.")
     except:
         service = "ollama"
@@ -210,7 +210,7 @@ def compute(model,df,param):
         return returns
 
     try:
-        service = param['options']['params']['service'].strip("\"")
+        service = param['options']['params']['llm_service'].strip("\"")
         print(f"Using {service} LLM service.")
     except:
         service = "ollama"
