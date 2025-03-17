@@ -103,6 +103,11 @@ def apply(model,df,param):
         d_type = "Documents"
         print("Using Document knowledge type by default")
 
+    # In the previous version, Logs was used as d_type for data encoded via Pymilvus
+    # In this updated version, both document data and Splunk index data are encoded via llama-index. Therefore, the Logs option is legacy.
+    # Manually change d_type to Logs to utilize the legacy code remained in this notebook.
+    d_type = "Documents"
+
     try:
         use_local= int(param['options']['params']['use_local'])
     except:
@@ -222,7 +227,7 @@ def apply(model,df,param):
             if d_type == "Documents":
                 files = ""
                 for node in r.source_nodes:
-                    files += node.node.metadata['file_path']
+                    files += str(node.node.metadata)
                     files += "\n"
                     files += node.text
                     files += "\n"
@@ -295,6 +300,11 @@ def compute(model,df,param):
         d_type = "Documents"
         print("Using Document knowledge type by default")
 
+    # In the previous version, Logs was used as d_type for data encoded via Pymilvus
+    # In this updated version, both document data and Splunk index data are encoded via llama-index. Therefore, the Logs option is legacy.
+    # Manually change d_type to Logs to utilize the legacy code remained in this notebook.
+    d_type = "Documents"
+    
     try:
         use_local= int(param['options']['params']['use_local'])
     except:
@@ -414,7 +424,7 @@ def compute(model,df,param):
             if d_type == "Documents":
                 files = ""
                 for node in r.source_nodes:
-                    files += node.node.metadata['file_path']
+                    files += str(node.node.metadata)
                     files += "\n"
                     files += node.text
                     files += "\n"
