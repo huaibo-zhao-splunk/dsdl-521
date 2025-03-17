@@ -12,17 +12,16 @@ import numpy as np
 import pandas as pd
 import os
 import time
-import pymilvus
-from pymilvus import (
-    connections,
-    utility,
-    FieldSchema, CollectionSchema, DataType,
-    Collection,
-)
+from llama_index.core import VectorStoreIndex, ServiceContext, Settings
+from llama_index.vector_stores.milvus import MilvusVectorStore
+from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilter
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core.bridge.pydantic import BaseModel, StrictFloat, StrictInt, StrictStr
+from llama_index.core.schema import BaseComponent, BaseNode, TextNode
 # ...
 # global constants
 MODEL_DIRECTORY = "/srv/app/model/data/"
+MILVUS_ENDPOINT = "http://milvus-standalone:19530"
 
 
 
@@ -57,32 +56,6 @@ def stage(name):
 # returns the model object which will be used as a reference to call fit, apply and summary subsequently
 def init(df,param):
     model = {}
-        
-    pk_type=DataType.VARCHAR        
-    embedding_type=DataType.FLOAT_VECTOR
-    
-    try:
-        collection_name=param['options']['params']['collection_name'].strip('\"')
-    except:
-        collection_name="default_collection"
-        print("Using default collection")
-    
-    print("start connecting to Milvus")
-    # this hostname may need changing to a specific local docker network ip address depending on docker configuration
-    connections.connect("default", host="milvus-standalone", port="19530")
-
-    collection_exists = utility.has_collection(collection_name)
-    
-    if collection_exists:
-        print(f"The collection {collection_name} already exists")
-        collection = Collection(collection_name)
-        collection.load()
-    else:
-        print(f"The collection {collection_name} does not exist")
-        raise Exception("The collection {collection_name} does not exist. Create it by sending data to a collection with that name using the push_to_milvus algo.")
-    
-    model['collection']=collection
-    model['collection_name']=collection_name
     return model
 
 
@@ -126,7 +99,17 @@ def apply(model,df,param):
     except:
         embedder_name = 'all-MiniLM-L6-v2'
         print("Using all-MiniLM-L6-v2 as embedding model by default") 
-        
+    
+    if embedder_name == 'intfloat/multilingual-e5-large':
+        embedder_dimension = 1024
+    elif embedder_name == 'all-MiniLM-L6-v2':
+        embedder_dimension = 384
+    else:
+        try:
+            embedder_dimension=int(param['options']['params']['embedder_dimension'])
+        except:
+            embedder_dimension=384
+            
     if use_local:
         embedder_name = f'/srv/app/model/data/{embedder_name}'
         print("Using local embedding model checkpoints") 
@@ -137,7 +120,14 @@ def apply(model,df,param):
         cols = {"Results": [f"Failed to load embedding model. ERROR: {e}"]}
         returns = pd.DataFrame(data=cols)
         return returns
-    
+
+    try:
+        collection_name = param['options']['params']['collection_name'].strip('\"')
+    except:
+        cols = {"Results": ["Please specify a collection_name parameter as the vector search target"]}
+        returns = pd.DataFrame(data=cols)
+        return returns
+        
     try:
        top_k=int(param['options']['params']['top_k'])
     except:
@@ -148,58 +138,40 @@ def apply(model,df,param):
         splitter=param['options']['params']['splitter']
     except:
         splitter="|"
+
+    try:
+        Settings.llm = None
+        Settings.embed_model = transformer_embedder
+        vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+        index = VectorStoreIndex.from_vector_store(
+           vector_store=vector_store
+        )
+        retriever = index.as_retriever(similarity_top_k=top_k)
+    except Exception as e:
+        cols = {"Results": [f"Could not load collection. ERROR: {e}"]}
+        result = pd.DataFrame(data=cols)
+        return result
     
     try:
-        text_column = df['text'].astype(str).tolist()
+        query = df['text'].astype(str).tolist()[0]
     except Exception as e:
         cols = {"Results": [f"Failed to read input data. ERROR: {e}. Make sure you have an input field called text"]}
         returns = pd.DataFrame(data=cols)
         return returns
+
+    retrieved_nodes = retriever.retrieve(query)
     try:
-        vector_column = []
-        for text in text_column:
-            vector_column.append(transformer_embedder.get_text_embedding(text))
-        
-        search_params = {
-            "metric_type": "L2",
-            "params": {"nprobe": 10},
-        }
-        output_fields = [item.name for item in model['collection'].schema.fields]
-        output_fields.remove('embeddings')
-        results = model['collection'].search(data=vector_column, anns_field="embeddings", param=search_params, limit=top_k, output_fields=output_fields)
-        l = []
-        f = []
-        d = []
-        output_fields.remove('label')
-        for result in results:
-            x = ''
-            y = ''
-            z = ''
-            for r in result:
-                t = {}
-                for field in output_fields:
-                    t[field] = r.entity.get(field)
-                x += str(t)
-                x += splitter
-                y += r.entity.get('label')
-                y += splitter
-                z += str(round(r.distance,4))
-                z += splitter
-            xs = x.rstrip(splitter)
-            ys = y.rstrip(splitter)
-            zs = z.rstrip(splitter)
-            l.append(ys) 
-            f.append(xs)
-            d.append(zs)
+        result = pd.DataFrame([{"Score": node.score, "Result": node.text} for node in retrieved_nodes])
+        meta = pd.DataFrame([node.metadata for node in retrieved_nodes])
+        result[meta.columns] = meta
     except Exception as e:
-        cols = {"Results": [f"Failed to conduct vectorsearch. ERROR: {e}"]}
-        returns = pd.DataFrame(data=cols)
-        return returns
+        cols = {"Results": [f"ERROR: {e}"]}
+        return pd.DataFrame(data=cols)
+    if not len(result):
+        cols = {"Results": ["ERROR: No result returned"]}
+        return pd.DataFrame(data=cols)
     
-    
-    cols = {"Results": l, "Fields": f, "Distance": d}
-    returns = pd.DataFrame(data=cols)
-    return returns
+    return result
 
 
 
@@ -258,7 +230,17 @@ def compute(model,df,param):
     except:
         embedder_name = 'all-MiniLM-L6-v2'
         print("Using all-MiniLM-L6-v2 as embedding model by default") 
-        
+    
+    if embedder_name == 'intfloat/multilingual-e5-large':
+        embedder_dimension = 1024
+    elif embedder_name == 'all-MiniLM-L6-v2':
+        embedder_dimension = 384
+    else:
+        try:
+            embedder_dimension=int(param['options']['params']['embedder_dimension'])
+        except:
+            embedder_dimension=384
+            
     if use_local:
         embedder_name = f'/srv/app/model/data/{embedder_name}'
         print("Using local embedding model checkpoints") 
@@ -269,7 +251,14 @@ def compute(model,df,param):
         cols = {"Results": [f"Failed to load embedding model. ERROR: {e}"]}
         returns = pd.DataFrame(data=cols)
         return returns
-    
+
+    try:
+        collection_name = param['options']['params']['collection_name'].strip('\"')
+    except:
+        cols = {"Results": ["Please specify a collection_name parameter as the vector search target"]}
+        returns = pd.DataFrame(data=cols)
+        return returns
+        
     try:
        top_k=int(param['options']['params']['top_k'])
     except:
@@ -280,58 +269,40 @@ def compute(model,df,param):
         splitter=param['options']['params']['splitter']
     except:
         splitter="|"
+
+    try:
+        Settings.llm = None
+        Settings.embed_model = transformer_embedder
+        vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+        index = VectorStoreIndex.from_vector_store(
+           vector_store=vector_store
+        )
+        retriever = index.as_retriever(similarity_top_k=top_k)
+    except Exception as e:
+        cols = {"Results": [f"Could not load collection. ERROR: {e}"]}
+        result = pd.DataFrame(data=cols)
+        return result
     
     try:
-        text_column = df['text'].astype(str).tolist()
+        query = df['text'].astype(str).tolist()[0]
     except Exception as e:
         cols = {"Results": [f"Failed to read input data. ERROR: {e}. Make sure you have an input field called text"]}
         returns = pd.DataFrame(data=cols)
         return returns
+
+    retrieved_nodes = retriever.retrieve(query)
     try:
-        vector_column = []
-        for text in text_column:
-            vector_column.append(transformer_embedder.get_text_embedding(text))
-        
-        search_params = {
-            "metric_type": "L2",
-            "params": {"nprobe": 10},
-        }
-        output_fields = [item.name for item in model['collection'].schema.fields]
-        output_fields.remove('embeddings')
-        results = model['collection'].search(data=vector_column, anns_field="embeddings", param=search_params, limit=top_k, output_fields=output_fields)
-        l = []
-        f = []
-        d = []
-        output_fields.remove('label')
-        for result in results:
-            x = ''
-            y = ''
-            z = ''
-            for r in result:
-                t = {}
-                for field in output_fields:
-                    t[field] = r.entity.get(field)
-                x += str(t)
-                x += splitter
-                y += r.entity.get('label')
-                y += splitter
-                z += str(round(r.distance,4))
-                z += splitter
-            xs = x.rstrip(splitter)
-            ys = y.rstrip(splitter)
-            zs = z.rstrip(splitter)
-            l.append(ys) 
-            f.append(xs)
-            d.append(zs)
+        result = pd.DataFrame([{"Score": node.score, "Result": node.text} for node in retrieved_nodes])
+        meta = pd.DataFrame([node.metadata for node in retrieved_nodes])
+        result[meta.columns] = meta
     except Exception as e:
-        cols = {"Results": [f"Failed to conduct vectorsearch. ERROR: {e}"]}
-        returns = pd.DataFrame(data=cols)
-        return returns
+        cols = {"Results": [f"ERROR: {e}"]}
+        return pd.DataFrame(data=cols)
+    if not len(result):
+        cols = {"Results": ["ERROR: No result returned"]}
+        return pd.DataFrame(data=cols)
     
-    
-    cols = {"Results": l, "Fields": f, "Distance": d}
-    returns = pd.DataFrame(data=cols)
-    return returns
+    return result
 
 
 
