@@ -1,0 +1,73 @@
+{
+    "llm": {
+        "ollama": {
+            "is_configured": 1,
+            "model": null,
+            "base_url": "http://ollama:11434"
+        },
+        "azure_openai": {
+            "is_configured": 0,
+            "model": null,
+            "deployment_name": null,
+            "api_key": null,
+            "azure_endpoint": null,
+            "api_version": null
+        },
+        "openai": {
+            "is_configured": 0,
+            "model": null,
+            "api_key": null
+        },
+        "bedrock": {
+            "is_configured": 0,
+            "model": null,
+            "aws_access_key_id": null,
+            "aws_secret_access_key": null,
+            "aws_session_token": null,
+            "region_name": null
+        },
+        "gemini": {
+            "is_configured": 0,
+            "model": null,
+            "api_key": null
+        }
+    },
+    "embedding_model": {
+        "huggingface": {
+            "is_configured": 1,
+            "model_name": "all-MiniLM-L6-v2"
+        },
+        "ollama": {
+            "is_configured": 0,
+            "model_name": null,
+            "base_url": null
+        },
+        "azure_openai": {
+            "is_configured": 0,
+            "model": null,
+            "deployment_name": null,
+            "api_key": null,
+            "azure_endpoint": null,
+            "api_version": null
+        },
+        "openai": {
+            "is_configured": 0,
+            "model": null,
+            "api_key": null
+        },
+        "bedrock": {
+            "is_configured": 0,
+            "model_name": null,
+            "aws_access_key_id": null,
+            "aws_secret_access_key": null,
+            "aws_session_token": null,
+            "region_name": null,
+            "aws_profile": null
+        },
+        "gemini": {
+            "is_configured": 0,
+            "model_name": null,
+            "api_key": null
+        }
+    }
+}
