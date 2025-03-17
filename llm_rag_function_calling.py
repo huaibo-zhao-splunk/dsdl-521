@@ -31,6 +31,7 @@ from typing import Sequence, List
 from llama_index.core.tools import BaseTool, FunctionTool
 from llama_index.core.agent import AgentRunner, ReActAgentWorker
 from pydantic import Field
+from app.model.llm_utils import create_llm, create_embedding_model
 # ...
 # global constants
 MODEL_DIRECTORY = "/srv/app/model/data/"
@@ -221,19 +222,29 @@ def apply(model,df,param):
         tool_list.append(search_splunk_tool)
     if func2:
         tool_list.append(search_record_from_vector_db_tool)
-    
+
     try:
-        model = param['options']['params']['model_name'].strip('\"')
+        service = param['options']['params']['llm_service'].strip("\"")
+        print(f"Using {service} LLM service.")
     except:
-        result = pd.DataFrame({'Message': "ERROR: Please specify a model_name."})
-        return result
-    
-    url = "http://ollama:11434"
-    try:
-        llm = Ollama(model=model, base_url=url, request_timeout=6000.0)
-    except Exception as e:
-        result = pd.DataFrame({'Message': f"Failed to load LLM model. ERROR: {e}"})
-        return result
+        service = "ollama"
+        print("Using default Ollama LLM service.")
+        
+    if service == "ollama": 
+        try:
+            model_name = param['options']['params']['model_name'].strip("\"")
+        except:
+            cols={'Message': ["ERROR: Please make sure you set the parameter \'model_name\'"]}
+            returns=pd.DataFrame(data=cols)
+            return returns
+        llm, m = create_llm(service='ollama', model=model_name)
+    else:
+        llm, m = create_llm(service=service)
+
+    if llm is None:
+        cols={'Message': [m]}
+        returns=pd.DataFrame(data=cols)
+        return returns
 
     
     worker = ReActAgentWorker.from_tools(tool_list, llm=llm)
