@@ -26,6 +26,7 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 import textwrap
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.core import ChatPromptTemplate
+from app.model.llm_utils import create_llm, create_embedding_model
 
 # ...
 # global constants
@@ -96,12 +97,6 @@ def fit(model,df,param):
 # returns the calculated results
 def apply(model,df,param):
     X = df["query"].values.tolist()
-    # "Documents" or "Logs"
-    try:
-        d_type = param['options']['params']['rag_type'].strip('\"')
-    except:
-        d_type = "Documents"
-        print("Using Document knowledge type by default")
 
     # In the previous version, Logs was used as d_type for data encoded via Pymilvus
     # In this updated version, both document data and Splunk index data are encoded via llama-index. Therefore, the Logs option is legacy.
@@ -109,16 +104,85 @@ def apply(model,df,param):
     d_type = "Documents"
 
     try:
-        use_local= int(param['options']['params']['use_local'])
+        embedder_service = param['options']['params']['embedder_service'].strip('\"')
+        print(f"Using {embedder_service} embedding service")
     except:
-        use_local=0
-        print("Download embedding model by default")
-        
+        embedder_service = "huggingface"
+        print("Using default Huggingface embedding service")
+
     try:
-        embedder_name = param['options']['params']['embedder_name'].strip('\"')
+        llm_service = param['options']['params']['llm_service'].strip("\"")
+        print(f"Using {llm_service} LLM service.")
     except:
-        embedder_name = 'all-MiniLM-L6-v2'
-        print("Using all-MiniLM-L6-v2 by default")
+        llm_service = "ollama"
+        print("Using default Ollama LLM service.")
+        
+    if embedder_service == "huggingface" or embedder_service == "ollama":
+        try:
+            use_local= int(param['options']['params']['use_local'])
+        except:
+            use_local = 0
+            print("Downloading embedding model by default") 
+            
+        try:
+            embedder_name=param['options']['params']['embedder_name'].strip('\"')
+        except:
+            embedder_name = 'all-MiniLM-L6-v2'
+            print("Using all-MiniLM-L6-v2 as embedding model by default") 
+    
+        if embedder_name == 'intfloat/multilingual-e5-large':
+            embedder_dimension = 1024
+        elif embedder_name == 'all-MiniLM-L6-v2':
+            embedder_dimension = 384
+        else:
+            try:
+                embedder_dimension=int(param['options']['params']['embedder_dimension'])
+            except:
+                embedder_dimension=384
+            
+        if embedder_service == "huggingface" and use_local:
+            embedder_name = f'/srv/app/model/data/{embedder_name}'
+            print("Using local embedding model checkpoints") 
+    else:
+        try:
+            embedder_dimension=int(param['options']['params']['embedder_dimension'])
+        except:
+            cols = {"Results": ["Please specify the embedder_dimension parameter for the embedding model dimensions"]}
+            returns = pd.DataFrame(data=cols)
+            return returns
+
+    try:
+        if embedder_service == "huggingface" or embedder_service == "ollama":
+            embedder, m = create_embedding_model(service=embedder_service, model=embedder_name)
+        else:
+            embedder, m = create_embedding_model(service=embedder_service)
+
+        if embedder is not None:
+            print(m)
+        else:
+            cols = {"Results": [f"ERROR in embedding model loading: {m}. "]}
+            returns = pd.DataFrame(data=cols)
+            return returns
+    except Exception as e:
+        cols = {"Results": [f"Failed to initiate embedding model. ERROR: {e}"]}
+        returns = pd.DataFrame(data=cols)
+        return returns
+
+    if llm_service == "ollama": 
+        try:
+            model_name = param['options']['params']['model_name'].strip("\"")
+        except:
+            cols={'Result': ["ERROR: Please make sure you set the parameter \'model_name\'"]}
+            returns=pd.DataFrame(data=cols)
+            return returns
+        llm, m = create_llm(service='ollama', model=model_name)
+    else:
+        llm, m = create_llm(service=llm_service)
+
+    if llm is None:
+        cols={'Result': [m]}
+        returns=pd.DataFrame(data=cols)
+        return returns
 
     try:
         collection_name = param['options']['params']['collection_name'].strip('\"')
@@ -126,20 +190,6 @@ def apply(model,df,param):
         cols = {"Response": ["ERROR: no collection specified. Please specify a vectorDB collection"], "References": ["None"]}
         result = pd.DataFrame(data=cols)
         return result
-        
-
-    if embedder_name == 'intfloat/multilingual-e5-large':
-        embedder_dimension = 1024
-    elif embedder_name == 'all-MiniLM-L6-v2':
-        embedder_dimension = 384
-    else:
-        try:
-            embedder_dimension = int(param['options']['params']['embedder_dimension'])
-        except:
-            embedder_dimension = 384
-    if use_local:
-        embedder_name = f'/srv/app/model/data/{embedder_name}'
-        print("Using local embedding model checkpoints")
     
     try:
         top_k = int(param['options']['params']['top_k'])
@@ -182,26 +232,13 @@ def apply(model,df,param):
     
     text_qa_template = ChatPromptTemplate.from_messages(chat_text_qa_msgs)
 
+
     try:
-        model = param['options']['params']['model_name'].strip('\"')
-    except:
-        cols = {"Response": ["ERROR: no LLM model name specified. Please choose a LLM model."], "References": ["None"]}
-        result = pd.DataFrame(data=cols)
-        return result
-    try:
-        url = LLM_ENDPOINT
-        llm = Ollama(model=model, base_url=url, request_timeout=6000.0)
-    except Exception as e:
-        cols = {"Response": [f"Could not load LLM. ERROR: {e}"], "References": ["None"]}
-        result = pd.DataFrame(data=cols)
-        return result
-    try:
-        transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
         Settings.llm = llm
-        Settings.embed_model = transformer_embedder
+        Settings.embed_model = embedder
         Settings.chunk_size = 1024
     except Exception as e:
-        cols = {"Response": [f"Could not load embedder. ERROR: {e}"], "References": ["ERROR"]}
+        cols = {"Response": [f"Could not load LLM or embedder. ERROR: {e}"], "References": ["ERROR"]}
         result = pd.DataFrame(data=cols)
         return result
     try:
@@ -293,29 +330,92 @@ def summary(model=None):
 
 def compute(model,df,param):
     X = df["query"].values.tolist()
-    # "Documents" or "Logs"
-    try:
-        d_type = param['options']['params']['rag_type'].strip('\"')
-    except:
-        d_type = "Documents"
-        print("Using Document knowledge type by default")
 
     # In the previous version, Logs was used as d_type for data encoded via Pymilvus
     # In this updated version, both document data and Splunk index data are encoded via llama-index. Therefore, the Logs option is legacy.
     # Manually change d_type to Logs to utilize the legacy code remained in this notebook.
     d_type = "Documents"
-    
+
     try:
-        use_local= int(param['options']['params']['use_local'])
+        embedder_service = param['options']['params']['embedder_service'].strip('\"')
+        print(f"Using {embedder_service} embedding service")
     except:
-        use_local=0
-        print("Download embedding model by default")
+        embedder_service = "huggingface"
+        print("Using default Huggingface embedding service")
+
+    try:
+        llm_service = param['options']['params']['llm_service'].strip("\"")
+        print(f"Using {llm_service} LLM service.")
+    except:
+        llm_service = "ollama"
+        print("Using default Ollama LLM service.")
         
+    if embedder_service == "huggingface" or embedder_service == "ollama":
+        try:
+            use_local= int(param['options']['params']['use_local'])
+        except:
+            use_local = 0
+            print("Downloading embedding model by default") 
+            
+        try:
+            embedder_name=param['options']['params']['embedder_name'].strip('\"')
+        except:
+            embedder_name = 'all-MiniLM-L6-v2'
+            print("Using all-MiniLM-L6-v2 as embedding model by default") 
+    
+        if embedder_name == 'intfloat/multilingual-e5-large':
+            embedder_dimension = 1024
+        elif embedder_name == 'all-MiniLM-L6-v2':
+            embedder_dimension = 384
+        else:
+            try:
+                embedder_dimension=int(param['options']['params']['embedder_dimension'])
+            except:
+                embedder_dimension=384
+            
+        if embedder_service == "huggingface" and use_local:
+            embedder_name = f'/srv/app/model/data/{embedder_name}'
+            print("Using local embedding model checkpoints") 
+    else:
+        try:
+            embedder_dimension=int(param['options']['params']['embedder_dimension'])
+        except:
+            cols = {"Results": ["Please specify the embedder_dimension parameter for the embedding model dimensions"]}
+            returns = pd.DataFrame(data=cols)
+            return returns
+
     try:
-        embedder_name = param['options']['params']['embedder_name'].strip('\"')
-    except:
-        embedder_name = 'all-MiniLM-L6-v2'
-        print("Using all-MiniLM-L6-v2 by default")
+        if embedder_service == "huggingface" or embedder_service == "ollama":
+            embedder, m = create_embedding_model(service=embedder_service, model=embedder_name)
+        else:
+            embedder, m = create_embedding_model(service=embedder_service)
+
+        if embedder is not None:
+            print(m)
+        else:
+            cols = {"Results": [f"ERROR in embedding model loading: {m}. "]}
+            returns = pd.DataFrame(data=cols)
+            return returns
+    except Exception as e:
+        cols = {"Results": [f"Failed to initiate embedding model. ERROR: {e}"]}
+        returns = pd.DataFrame(data=cols)
+        return returns
+
+    if llm_service == "ollama": 
+        try:
+            model_name = param['options']['params']['model_name'].strip("\"")
+        except:
+            cols={'Result': ["ERROR: Please make sure you set the parameter \'model_name\'"]}
+            returns=pd.DataFrame(data=cols)
+            return returns
+        llm, m = create_llm(service='ollama', model=model_name)
+    else:
+        llm, m = create_llm(service=llm_service)
+
+    if llm is None:
+        cols={'Result': [m]}
+        returns=pd.DataFrame(data=cols)
+        return returns
 
     try:
         collection_name = param['options']['params']['collection_name'].strip('\"')
@@ -323,20 +423,6 @@ def compute(model,df,param):
         cols = {"Response": ["ERROR: no collection specified. Please specify a vectorDB collection"], "References": ["None"]}
         result = pd.DataFrame(data=cols)
         return result
-        
-
-    if embedder_name == 'intfloat/multilingual-e5-large':
-        embedder_dimension = 1024
-    elif embedder_name == 'all-MiniLM-L6-v2':
-        embedder_dimension = 384
-    else:
-        try:
-            embedder_dimension = int(param['options']['params']['embedder_dimension'])
-        except:
-            embedder_dimension = 384
-    if use_local:
-        embedder_name = f'/srv/app/model/data/{embedder_name}'
-        print("Using local embedding model checkpoints")
     
     try:
         top_k = int(param['options']['params']['top_k'])
@@ -379,26 +465,13 @@ def compute(model,df,param):
     
     text_qa_template = ChatPromptTemplate.from_messages(chat_text_qa_msgs)
 
+
     try:
-        model = param['options']['params']['model_name'].strip('\"')
-    except:
-        cols = {"Response": ["ERROR: no LLM model name specified. Please choose a LLM model."], "References": ["None"]}
-        result = pd.DataFrame(data=cols)
-        return result
-    try:
-        url = LLM_ENDPOINT
-        llm = Ollama(model=model, base_url=url, request_timeout=6000.0)
-    except Exception as e:
-        cols = {"Response": [f"Could not load LLM. ERROR: {e}"], "References": ["None"]}
-        result = pd.DataFrame(data=cols)
-        return result
-    try:
-        transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
         Settings.llm = llm
-        Settings.embed_model = transformer_embedder
+        Settings.embed_model = embedder
         Settings.chunk_size = 1024
     except Exception as e:
-        cols = {"Response": [f"Could not load embedder. ERROR: {e}"], "References": ["ERROR"]}
+        cols = {"Response": [f"Could not load LLM or embedder. ERROR: {e}"], "References": ["ERROR"]}
         result = pd.DataFrame(data=cols)
         return result
     try:
