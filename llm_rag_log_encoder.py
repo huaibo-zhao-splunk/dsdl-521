@@ -12,15 +12,9 @@ import numpy as np
 import pandas as pd
 import os
 import time
-import pymilvus
-from pymilvus import (
-    connections,
-    utility,
-    FieldSchema, CollectionSchema, DataType,
-    Collection,
-)
+from llama_index.core import VectorStoreIndex, Document, StorageContext, ServiceContext, Settings
+from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-
 # ...
 # global constants
 MODEL_DIRECTORY = "/srv/app/model/data/"
@@ -33,7 +27,7 @@ MILVUS_ENDPOINT = "http://milvus-standalone:19530"
 
 
     
-# In[19]:
+# In[2]:
 
 
 # this cell is not executed from MLTK and should only be used for staging data into the notebook environment
@@ -51,7 +45,7 @@ def stage(name):
 
 
     
-# In[42]:
+# In[5]:
 
 
 # initialize your model
@@ -59,79 +53,6 @@ def stage(name):
 # returns the model object which will be used as a reference to call fit, apply and summary subsequently
 def init(df,param):
     model = {}   
-    pk_type=DataType.VARCHAR        
-    embedding_type=DataType.FLOAT_VECTOR
-    # Dimensionality setting of collection
-    try:
-        embedder_name = param['options']['params']['embedder_name'].strip('\"')
-    except:
-        embedder_name = 'all-MiniLM-L6-v2'
-    # Dimension checking for default embedders
-    if embedder_name == 'intfloat/multilingual-e5-large':
-        n_dims = 1024
-    elif embedder_name == 'all-MiniLM-L6-v2':
-        n_dims = 384
-    else:
-        try:
-            n_dims=int(param['options']['params']['embedder_dimension'])
-        except:
-            n_dims=384
-    
-    
-    # Collection name setting   
-    try:
-        collection_name=param['options']['params']['collection_name'].strip('\"')
-    except:
-        collection_name="default_collection"
-    # Schema setting
-    try:
-        schema_fields=df.columns.tolist()
-        schema_fields.remove(param['options']['params']['label_field_name'])
-    except:
-        schema_fields=[]
-        
-    print("start connecting to Milvus")
-    try:
-        # this hostname may need changing to a specific local docker network ip address depending on docker configuration
-        connections.connect("default", host="milvus-standalone", port="19530")
-        collection_exists = utility.has_collection(collection_name)
-        
-        # Basic schema setting
-        fields = [
-            FieldSchema(name="_key", is_primary=True, auto_id=True, dtype=DataType.INT64),
-            FieldSchema(name="embeddings", dtype=embedding_type, dim=n_dims),
-            FieldSchema(name="label", dtype=DataType.VARCHAR, max_length=15000),
-        ]
-        # Additional schema setting
-        if len(schema_fields) != 0: 
-            for i in range(len(schema_fields)):
-                fields.append(FieldSchema(name=schema_fields[i], dtype=DataType.VARCHAR, max_length=1000))
-        # Create schema
-        
-        schema = CollectionSchema(fields, f"dsdl schema for {collection_name}")
-        print(fields)
-        
-        if collection_exists:
-            print(f"The collection {collection_name} already exists")
-            collection = Collection(collection_name)
-            collection.load()
-        else:
-            print(f"The collection {collection_name} does not exist")
-            print(f"creating new collection: {collection_name}")
-            collection = Collection(collection_name, schema, consistency_level="Strong")
-            index = {
-                "index_type": "IVF_FLAT",
-                "metric_type": "L2",
-                "params": {"nlist": 1024},
-            }
-            collection.create_index("embeddings", index)
-    except Exception as e:
-        collection = None
-        model["message"] = e
-    
-    model['collection']=collection
-    model['collection_name']=collection_name
-
     return model
 
 
@@ -156,94 +77,107 @@ def fit(model,df,param):
 
 
     
-# In[44]:
+# In[8]:
 
 
 # apply your model
 # returns the calculated results
 def apply(model,df,param):
-    if model['collection'] is not None:
-        try:
-            use_local= int(param['options']['params']['use_local'])
-        except:
-            use_local=0
-        try:
-            embedder_name = param['options']['params']['embedder_name'].strip('\"')
-        except:
-            embedder_name = 'all-MiniLM-L6-v2'
-        if use_local:
-            embedder_name = f'/srv/app/model/data/{embedder_name}'
-            print("Using local embedding model checkpoints")  
+    result_dict = {"embedder_Info": ["No Result"], "vector_Store_Info": ["No Result"], "message": [""]}
+    
+    try:
+        collection_name = param['options']['params']['collection_name'].strip('\"')
+    except:
+        data = None
+        result_dict["message"].append("Please specify a collection_name parameter for the vectorDB collection.")
+        return pd.DataFrame(data=result_dict)
 
-        try:
-            transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
-        except Exception as e:
-            m = f"Failed to initiate embedding model. ERROR: {e}"
-            df['message'] = [m]*df.shape[0]
-            return df['message']
+    try:
+        use_local= int(param['options']['params']['use_local'])
+    except:
+        use_local=0
 
-        try:
-            df=df.copy()
-            label_field_name=param['options']['params']['label_field_name']
-            label_column = df[label_field_name].astype(str)
-        
-            text_column = label_column.tolist()
-            vector_column = []
-            for text in text_column:
-                vector_column.append(transformer_embedder.get_text_embedding(text))
-            data=[vector_column, label_column.tolist()]
-        except Exception as e:
-            m = f"Failed. Could not vectorize dataframe. ERROR: {e}"
-            df['message'] = [m]*df.shape[0]
-            return df['message']
-            
-        try:
-            schema_fields=df.columns.tolist()
-            schema_fields.remove(label_field_name)
-        except:
-            schema_fields=[]
-            
-        if data is not None:
-            if len(schema_fields) != 0:
-                for i in range(len(schema_fields)):  
-                    data.append(df[schema_fields[i]].astype(str).tolist())
-            # Cap at 16MB for each insertion, 1/4 of the 64MB limit
-            data_limit = 16000000
-            try:
-                n_dims=int(param['options']['params']['embedder_dimension'])
-            except:
-                n_dims=384
-            print(f"Size of data is {len(data[0])}")
-            num_vectors = int(data_limit / (n_dims * 4))
-            print(f"Batch size is {num_vectors}")
-            if len(data[0]) > num_vectors:
-                num_sublists = len(data[0]) // num_vectors
-                if len(data[0]) % num_vectors != 0:
-                    num_sublists += 1
-                print(f"Number of batches is {num_sublists}")
-                # Initialize the sublists
-                sublists = [[] for _ in range(num_sublists)]
-                # Iterate over each row in the data
-                for row in data:
-                    for i in range(num_sublists-1):
-                        sublists[i].append(row[i * num_vectors:(i + 1) * num_vectors])
-                    sublists[num_sublists-1].append(row[(num_sublists-1) * num_vectors:])
-            else:
-                sublists = [data]
-            try:
-                for sub_data in sublists:
-                    model['collection'].insert(sub_data, timeout=None)
-                    print(f"Inserted data batch with length {len(sub_data[0])}")
-                m = "Success"
-            except Exception as e:
-                m = f"Failed. Could not insert data to collection. ERROR: {e}"
+    try:
+        label_field_name=param['options']['params']['label_field_name']
+    except:
+        data = None
+        result_dict["message"] = ["Failed to preprocess data. Please specify a label_field_name parameter for the field to encode."]
+        return pd.DataFrame(data=result_dict)
+    
+    try:
+        embedder_name = param['options']['params']['embedder_name'].strip('\"')
+    except:
+        embedder_name = 'all-MiniLM-L6-v2'
+
+    if embedder_name == 'intfloat/multilingual-e5-large':
+        embedder_dimension = 1024
+    elif embedder_name == 'all-MiniLM-L6-v2':
+        embedder_dimension = 384
     else:
-        m = "Failed. Could not create collection. Check collection naming."
-        if model["message"]:
-            e = model["message"]
-            m = f"ERROR: {e}"
-    df['message'] = [m]*df.shape[0]
-    return df['message']
+        try:
+            embedder_dimension=int(param['options']['params']['embedder_dimension'])
+        except:
+            embedder_dimension=384
+            
+    if use_local:
+        embedder_name = f'/srv/app/model/data/{embedder_name}'
+        print("Using local embedding model checkpoints")  
+
+    try:
+        transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
+        result_dict["embedder_Info"] = [str(transformer_embedder)]
+    except Exception as e:
+        m = f"Failed to initiate embedding model. ERROR: {e}"
+        result_dict["message"] = [m]
+        return pd.DataFrame(data=result_dict)
+
+
+    try:
+        df=df.copy()
+        text_df = df[label_field_name].astype(str).tolist()
+        meta_df = df.drop(label_field_name, axis=1).astype(str)
+
+        if meta_df.empty:
+            documents = [Document(text=text) for text in text_df]            
+        else:
+            meta_records = meta_df.to_dict('records')
+            meta_fields = meta_df.columns.tolist()
+            documents = [Document(text=text, metadata=meta, excluded_embed_metadata_keys=meta_fields, excluded_llm_metadata_keys=meta_fields) for text, meta in zip(text_df, meta_records)]
+
+        doc_count = len(documents)
+    except KeyError as e:
+        data = None
+        result_dict["message"] = f"Failed at data preprocessing. Could not find label_field_name {label_field_name} in data. ERROR:{e}"
+        return pd.DataFrame(data=result_dict)
+    except Exception as e:
+        data = None
+        result_dict["message"] = f"Failed at data preprocessing. ERROR:{e}"
+        return pd.DataFrame(data=result_dict)
+
+    if (documents is None) or (transformer_embedder is None):
+        result_dict["message"] = f"Failed to load input data or embedding model. Input data:{documents}, Embedding model:{transformer_embedder}"
+        return pd.DataFrame(data=result_dict)
+        
+    try:
+        Settings.llm = None
+        Settings.embed_model = transformer_embedder
+        # similarity_metric set to default value: IP (inner-product)
+        vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+        VectorStoreIndex.from_documents(
+            documents, storage_context=storage_context
+        )
+
+        result_dict["message"] = "Success"
+        result_dict["embedder_Info"] = [str(transformer_embedder)]
+        result_dict["vector_Store_Info"] = [str(vector_store)]
+
+    except Exception as e:
+        result_dict["message"] = f"Failed at vectorization. ERROR:{e}"
+        return pd.DataFrame(data=result_dict)
+    
+    return pd.DataFrame(data=result_dict)
 
 
 
@@ -285,88 +219,101 @@ def summary(model=None):
     return returns
 
 def compute(model,df,param):
-    if model['collection'] is not None:
-        try:
-            use_local= int(param['options']['params']['use_local'])
-        except:
-            use_local=0
-        try:
-            embedder_name = param['options']['params']['embedder_name'].strip('\"')
-        except:
-            embedder_name = 'all-MiniLM-L6-v2'
-        if use_local:
-            embedder_name = f'/srv/app/model/data/{embedder_name}'
-            print("Using local embedding model checkpoints")  
+    result_dict = {"embedder_Info": ["No Result"], "vector_Store_Info": ["No Result"], "message": [""]}
+    
+    try:
+        collection_name = param['options']['params']['collection_name'].strip('\"')
+    except:
+        data = None
+        result_dict["message"].append("Please specify a collection_name parameter for the vectorDB collection.")
+        return pd.DataFrame(data=result_dict)
 
-        try:
-            transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
-        except Exception as e:
-            m = f"Failed to initiate embedding model. ERROR: {e}"
-            df['message'] = [m]*df.shape[0]
-            return df['message']
+    try:
+        use_local= int(param['options']['params']['use_local'])
+    except:
+        use_local=0
 
-        try:
-            df=df.copy()
-            label_field_name=param['options']['params']['label_field_name']
-            label_column = df[label_field_name].astype(str)
-        
-            text_column = label_column.tolist()
-            vector_column = []
-            for text in text_column:
-                vector_column.append(transformer_embedder.get_text_embedding(text))
-            data=[vector_column, label_column.tolist()]
-        except Exception as e:
-            m = f"Failed. Could not vectorize dataframe. ERROR: {e}"
-            df['message'] = [m]*df.shape[0]
-            return df['message']
-            
-        try:
-            schema_fields=df.columns.tolist()
-            schema_fields.remove(label_field_name)
-        except:
-            schema_fields=[]
-            
-        if data is not None:
-            if len(schema_fields) != 0:
-                for i in range(len(schema_fields)):  
-                    data.append(df[schema_fields[i]].astype(str).tolist())
-            # Cap at 16MB for each insertion, 1/4 of the 64MB limit
-            data_limit = 16000000
-            try:
-                n_dims=int(param['options']['params']['embedder_dimension'])
-            except:
-                n_dims=384
-            print(f"Size of data is {len(data[0])}")
-            num_vectors = int(data_limit / (n_dims * 4))
-            print(f"Batch size is {num_vectors}")
-            if len(data[0]) > num_vectors:
-                num_sublists = len(data[0]) // num_vectors
-                if len(data[0]) % num_vectors != 0:
-                    num_sublists += 1
-                print(f"Number of batches is {num_sublists}")
-                # Initialize the sublists
-                sublists = [[] for _ in range(num_sublists)]
-                # Iterate over each row in the data
-                for row in data:
-                    for i in range(num_sublists-1):
-                        sublists[i].append(row[i * num_vectors:(i + 1) * num_vectors])
-                    sublists[num_sublists-1].append(row[(num_sublists-1) * num_vectors:])
-            else:
-                sublists = [data]
-            try:
-                for sub_data in sublists:
-                    model['collection'].insert(sub_data, timeout=None)
-                    print(f"Inserted data batch with length {len(sub_data[0])}")
-                m = "Success"
-            except Exception as e:
-                m = f"Failed. Could not insert data to collection. ERROR: {e}"
+    try:
+        label_field_name=param['options']['params']['label_field_name']
+    except:
+        data = None
+        result_dict["message"] = ["Failed to preprocess data. Please specify a label_field_name parameter for the field to encode."]
+        return pd.DataFrame(data=result_dict)
+    
+    try:
+        embedder_name = param['options']['params']['embedder_name'].strip('\"')
+    except:
+        embedder_name = 'all-MiniLM-L6-v2'
+
+    if embedder_name == 'intfloat/multilingual-e5-large':
+        embedder_dimension = 1024
+    elif embedder_name == 'all-MiniLM-L6-v2':
+        embedder_dimension = 384
     else:
-        m = "Failed. Could not create collection. Check collection naming."
-        if model["message"]:
-            e = model["message"]
-            m = f"ERROR: {e}"
-    df['message'] = [m]*df.shape[0]
-    return df['message']
+        try:
+            embedder_dimension=int(param['options']['params']['embedder_dimension'])
+        except:
+            embedder_dimension=384
+            
+    if use_local:
+        embedder_name = f'/srv/app/model/data/{embedder_name}'
+        print("Using local embedding model checkpoints")  
+
+    try:
+        transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
+        result_dict["embedder_Info"] = [str(transformer_embedder)]
+    except Exception as e:
+        m = f"Failed to initiate embedding model. ERROR: {e}"
+        result_dict["message"] = [m]
+        return pd.DataFrame(data=result_dict)
+
+
+    try:
+        df=df.copy()
+        text_df = df[label_field_name].astype(str).tolist()
+        meta_df = df.drop(label_field_name, axis=1).astype(str)
+
+        if meta_df.empty:
+            documents = [Document(text=text) for text in text_df]            
+        else:
+            meta_records = meta_df.to_dict('records')
+            meta_fields = meta_df.columns.tolist()
+            documents = [Document(text=text, metadata=meta, excluded_embed_metadata_keys=meta_fields, excluded_llm_metadata_keys=meta_fields) for text, meta in zip(text_df, meta_records)]
+
+        doc_count = len(documents)
+    except KeyError as e:
+        data = None
+        result_dict["message"] = f"Failed at data preprocessing. Could not find label_field_name {label_field_name} in data. ERROR:{e}"
+        return pd.DataFrame(data=result_dict)
+    except Exception as e:
+        data = None
+        result_dict["message"] = f"Failed at data preprocessing. ERROR:{e}"
+        return pd.DataFrame(data=result_dict)
+
+    if (documents is None) or (transformer_embedder is None):
+        result_dict["message"] = f"Failed to load input data or embedding model. Input data:{documents}, Embedding model:{transformer_embedder}"
+        return pd.DataFrame(data=result_dict)
+        
+    try:
+        Settings.llm = None
+        Settings.embed_model = transformer_embedder
+        # similarity_metric set to default value: IP (inner-product)
+        vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+        VectorStoreIndex.from_documents(
+            documents, storage_context=storage_context
+        )
+
+        result_dict["message"] = "Success"
+        result_dict["embedder_Info"] = [str(transformer_embedder)]
+        result_dict["vector_Store_Info"] = [str(vector_store)]
+
+    except Exception as e:
+        result_dict["message"] = f"Failed at vectorization. ERROR:{e}"
+        return pd.DataFrame(data=result_dict)
+    
+    return pd.DataFrame(data=result_dict)
 
 
 
