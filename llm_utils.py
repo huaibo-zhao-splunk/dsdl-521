@@ -12,11 +12,11 @@ from llama_index.embeddings.bedrock import BedrockEmbedding
 from llama_index.embeddings.gemini import GeminiEmbedding
 
 import json
+import os
 
 
 def create_llm(service='ollama', model=None):
-    with open("/srv/app/model/llm_rag_configs.json", 'r') as f:
-        config = json.load(f)
+    config = json.loads(os.environ['llm_config'])
     service_list = ['ollama','azure_openai','openai','bedrock','gemini']
     if service in service_list:
         print(f"Initializing LLM object from {service}")
@@ -70,8 +70,7 @@ def create_llm(service='ollama', model=None):
     return llm, message
     
 def create_embedding_model(service='huggingface', model=None):
-    with open("/srv/app/model/llm_rag_configs.json", 'r') as f:
-        config = json.load(f)
+    config = json.loads(os.environ['llm_config'])
     service_list = ['huggingface','ollama','azure_openai','openai','bedrock','gemini']
     if service in service_list:
         print(f"Initializing Embedding model object from {service}")
