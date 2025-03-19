@@ -27,6 +27,7 @@ llama-index-embeddings-bedrock
 llama-index-embeddings-azure-openai
 llama-index-embeddings-gemini
 llama-index-embeddings-vertex
+llama-index-embeddings-vllm
 llama-index-llms-ollama
 llama-index-llms-azure-openai
 llama-index-llms-bedrock
