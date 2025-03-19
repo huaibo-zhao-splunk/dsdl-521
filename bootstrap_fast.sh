@@ -19,8 +19,13 @@ else
 fi
 
 if [ "$MODE_DEV_PROD" = "PROD" ]; then
-  echo "Starting in mode = PROD"
-  uvicorn app.main:app --host 0.0.0.0 --port 5000 $uvicorn_https_param
+  if [ -n "$api_workers" ]; then
+    echo "Starting in mode = PROD with $api_workers api workers"
+    uvicorn app.main:app --host 0.0.0.0 --workers $api_workers --port 5000 $uvicorn_https_param
+  else
+    echo "Starting in mode = PROD with 10 api workers"
+    uvicorn app.main:app --host 0.0.0.0 --workers 10 --port 5000 $uvicorn_https_param
+  fi
 else
   if [ -n "$api_workers" ]; then
     echo "Starting in mode = DEV with $api_workers api workers"
