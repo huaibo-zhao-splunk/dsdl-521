@@ -15,53 +15,69 @@ import json
 import os
 
 
-def create_llm(service='ollama', model=None):
+def create_llm(service=None, model=None):
     config = json.loads(os.environ['llm_config'])
     service_list = ['ollama','azure_openai','openai','bedrock','gemini']
     if service in service_list:
+        llm_config_list = config['llm'][service]
         print(f"Initializing LLM object from {service}")
-        if not config['llm'][service]['is_configured']:
+        success = 0
+        for llm_config_item in llm_config_list:
+            if llm_config_item['is_configured']:
+                success = 1
+            else:
+                llm_config_list.remove(llm_config_item)
+        if not success:
             err = f"Service {service} is not configured. Please configure the service."
             return None, err
     else:
         err = f"Service {service} is not supported. Please choose from {str(service_list)}."
         return None, err
     
-    llm_config = dict(config['llm'][service])
-    del llm_config["is_configured"]
+    if model:
+        llm_config_items = [d for d in llm_config_list if d.get("model") == model]
+        if len(llm_config_items):
+            llm_config_item = dict(llm_config_items[0])
+            llm_config_item['model'] = model
+        else:
+            llm_config_item = dict(llm_config_list[0])
+            print(f"The specified model is not found in the configuration. Using configured model {llm_config_item['model']} instead.")
+    else:
+        llm_config_item = dict(llm_config_list[0])
+        print(f"No model specified at the input. Using configured model {llm_config_item['model']}.")
+    del llm_config_item["is_configured"]
+    
     if service == 'ollama':
-        if model:
-            llm_config['model'] = model
         try:
-            llm = Ollama(**llm_config, request_timeout=6000.0)
+            llm = Ollama(**llm_config_item, request_timeout=6000.0)
         except Exception as e:
             err = f"Failed at creating LLM object from {service}. Details: {e}."
             return None, err
 
     elif service == 'azure_openai':
         try:
-            llm = AzureOpenAI(**llm_config)
+            llm = AzureOpenAI(**llm_config_item)
         except Exception as e:
             err = f"Failed at creating LLM object from {service}. Details: {e}."
             return None, err
 
     elif service == 'openai':
         try:
-            llm = OpenAI(**llm_config)
+            llm = OpenAI(**llm_config_item)
         except Exception as e:
             err = f"Failed at creating LLM object from {service}. Details: {e}."
             return None, err
 
     elif service == 'bedrock':
         try:
-            llm = Bedrock(**llm_config)
+            llm = Bedrock(**llm_config_item)
         except Exception as e:
             err = f"Failed at creating LLM object from {service}. Details: {e}."
             return None, err
 
     else:
         try:
-            llm = Gemini(**llm_config)
+            llm = Gemini(**llm_config_item)
         except Exception as e:
             err = f"Failed at creating LLM object from {service}. Details: {e}."
             return None, err
@@ -69,66 +85,98 @@ def create_llm(service='ollama', model=None):
     message = f"Successfully created LLM object from {service}"
     return llm, message
     
-def create_embedding_model(service='huggingface', model=None):
+def create_embedding_model(service=None, model=None, use_local=0):
     config = json.loads(os.environ['llm_config'])
     service_list = ['huggingface','ollama','azure_openai','openai','bedrock','gemini']
+
     if service in service_list:
-        print(f"Initializing Embedding model object from {service}")
-        if not config['embedding_model'][service]['is_configured']:
+        emb_config_list = config['embedding_model'][service]
+        print(f"Initializing embedding model object from {service}")
+        success = 0
+        for emb_config_item in emb_config_list:
+            if emb_config_item['is_configured']:
+                success = 1
+            else:
+                emb_config_list.remove(emb_config_item)
+        if not success:
             err = f"Service {service} is not configured. Please configure the service."
             return None, err
     else:
         err = f"Service {service} is not supported. Please choose from {str(service_list)}."
         return None, err
+
+    # The key for model name differs in these two service groups
+    if service in ['huggingface','ollama','bedrock','gemini']:
+        model_key = "model_name"
+    else:
+        model_key = "model"
+        
+    if model:
+        emb_config_items = [d for d in emb_config_list if d.get(model_key) == model]
+        if len(emb_config_items):
+            emb_config_item = dict(emb_config_items[0])
+            emb_config_item[model_key] = model
+        else:
+            emb_config_item = dict(emb_config_list[0])
+            print(f"The specified model is not found in the configuration. Using configured model {emb_config_item[model_key]} instead.")
+    else:
+        emb_config_item = dict(emb_config_list[0])
+        print(f"No model specified at the input. Using configured model {emb_config_item[model_key]}.")
+
+    try:
+        emb_dims = int(emb_config_item["output_dims"])
+        print(f"The output dimensionality of the embedding model is {emb_dims}")
+        del emb_config_item["output_dims"]
+    except:
+        emb_dims = None
+        print("The output dimensionality of the embedding model is not configured")
+
+    del emb_config_item["is_configured"]
     
-    embedding_model_config = dict(config['embedding_model'][service])
-    del embedding_model_config["is_configured"]
     if service == 'huggingface':
-        if model:
-            embedding_model_config['model_name'] = model
+        if use_local:
+            emb_config_item[model_key] = f"/srv/app/model/data/{emb_config_item[model_key]}"
         try:
-            embedding_model = HuggingFaceEmbedding(**embedding_model_config)
+            embedding_model = HuggingFaceEmbedding(**emb_config_item)
         except Exception as e:
             err = f"Failed at creating Embedding model object from {service}. Details: {e}."
-            return None, err    
+            return None, None, err    
             
     elif service == 'ollama':
-        if model:
-            embedding_model_config['model_name'] = model
         try:
-            embedding_model = OllamaEmbedding(**embedding_model_config, request_timeout=6000.0)
+            embedding_model = OllamaEmbedding(**emb_config_item)
         except Exception as e:
             err = f"Failed at creating Embedding model object from {service}. Details: {e}."
-            return None, err
+            return None, None, err
 
     elif service == 'azure_openai':
         try:
-            embedding_model = AzureOpenAIEmbedding(**embedding_model_config)
+            embedding_model = AzureOpenAIEmbedding(**emb_config_item)
         except Exception as e:
             err = f"Failed at creating Embedding model object from {service}. Details: {e}."
-            return None, err
+            return None, None, err
 
     elif service == 'openai':
         try:
-            embedding_model = OpenAI(**embedding_model_config)
+            embedding_model = OpenAI(**emb_config_item)
         except Exception as e:
             err = f"Failed at creating Embedding model object from {service}. Details: {e}."
-            return None, err
+            return None, None, err
 
     elif service == 'bedrock':
         try:
-            embedding_model = BedrockEmbedding.from_credentials(**embedding_model_config)
+            embedding_model = BedrockEmbedding.from_credentials(**emb_config_item)
         except Exception as e:
             err = f"Failed at creating Embedding model object from {service}. Details: {e}."
-            return None, err
+            return None, None, err
 
     else:
         try:
-            embedding_model = GeminiEmbedding(**embedding_model_config)
+            embedding_model = GeminiEmbedding(**emb_config_item)
         except Exception as e:
             err = f"Failed at creating Embedding model object from {service}. Details: {e}."
-            return None, err
+            return None, None, err
             
     message = f"Successfully created Embedding model object from {service}"
-    return embedding_model, message
+    return embedding_model, emb_dims, message
     
