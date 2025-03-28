@@ -3,7 +3,7 @@
 
 
     
-# In[5]:
+# In[1]:
 
 
 # this definition exposes all python module imports that should be available in all subsequent commands
@@ -15,7 +15,6 @@ import time
 from llama_index.core import VectorStoreIndex, ServiceContext, Settings
 from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilter
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.bridge.pydantic import BaseModel, StrictFloat, StrictInt, StrictStr
 from llama_index.core.schema import BaseComponent, BaseNode, TextNode
 from app.model.llm_utils import create_llm, create_embedding_model
@@ -86,8 +85,6 @@ def fit(model,df,param):
 # In[13]:
 
 
-# apply your model
-# returns the calculated results
 def apply(model,df,param):
     try:
         service = param['options']['params']['embedder_service'].strip('\"')
@@ -96,45 +93,26 @@ def apply(model,df,param):
         service = "huggingface"
         print("Using default Huggingface embedding service")
 
-    if service == "huggingface" or service == "ollama":
-        try:
-            use_local= int(param['options']['params']['use_local'])
-        except:
-            use_local = 0
-            print("Downloading embedding model by default") 
+    try:
+        use_local= int(param['options']['params']['use_local'])
+    except:
+        use_local = 0
+        print("Not using local model") 
             
-        try:
-            embedder_name=param['options']['params']['embedder_name'].strip('\"')
-        except:
-            embedder_name = 'all-MiniLM-L6-v2'
-            print("Using all-MiniLM-L6-v2 as embedding model by default") 
+    try:
+        embedder_name=param['options']['params']['embedder_name'].strip('\"')
+    except:
+        embedder_name = None
+        print("Model name not specified") 
     
-        if embedder_name == 'intfloat/multilingual-e5-large':
-            embedder_dimension = 1024
-        elif embedder_name == 'all-MiniLM-L6-v2':
-            embedder_dimension = 384
-        else:
-            try:
-                embedder_dimension=int(param['options']['params']['embedder_dimension'])
-            except:
-                embedder_dimension=384
-            
-        if service == "huggingface" and use_local:
-            embedder_name = f'/srv/app/model/data/{embedder_name}'
-            print("Using local embedding model checkpoints") 
-    else:
-        try:
-            embedder_dimension=int(param['options']['params']['embedder_dimension'])
-        except:
-            cols = {"Results": ["Please specify the embedder_dimension parameter for the embedding model dimensions"]}
-            returns = pd.DataFrame(data=cols)
-            return returns
+    try:
+        embedder_dimension=int(param['options']['params']['embedder_dimension'])
+    except:
+        embedder_dimension=None
+        print("Model dimension not specified") 
 
     try:
-        if service == "huggingface" or service == "ollama":
-            embedder, m = create_embedding_model(service=service, model=embedder_name)
-        else:
-            embedder, m = create_embedding_model(service=service)
+        embedder, output_dims, m = create_embedding_model(service=service, model=embedder_name, use_local=use_local)
 
         if embedder is not None:
             print(m)
@@ -142,6 +120,8 @@ def apply(model,df,param):
             cols = {"Results": [f"ERROR in embedding model loading: {m}. "]}
             returns = pd.DataFrame(data=cols)
             return returns
+        if output_dims:
+            embedder_dimension = output_dims 
     except Exception as e:
         cols = {"Results": [f"Failed to initiate embedding model. ERROR: {e}"]}
         returns = pd.DataFrame(data=cols)
@@ -244,7 +224,7 @@ def summary(model=None):
     returns = {"version": {"numpy": np.__version__, "pandas": pd.__version__} }
     return returns
 
-def compute(model,df,param):
+def apply(model,df,param):
     try:
         service = param['options']['params']['embedder_service'].strip('\"')
         print(f"Using {service} embedding service")
@@ -252,45 +232,26 @@ def compute(model,df,param):
         service = "huggingface"
         print("Using default Huggingface embedding service")
 
-    if service == "huggingface" or service == "ollama":
-        try:
-            use_local= int(param['options']['params']['use_local'])
-        except:
-            use_local = 0
-            print("Downloading embedding model by default") 
+    try:
+        use_local= int(param['options']['params']['use_local'])
+    except:
+        use_local = 0
+        print("Not using local model") 
             
-        try:
-            embedder_name=param['options']['params']['embedder_name'].strip('\"')
-        except:
-            embedder_name = 'all-MiniLM-L6-v2'
-            print("Using all-MiniLM-L6-v2 as embedding model by default") 
+    try:
+        embedder_name=param['options']['params']['embedder_name'].strip('\"')
+    except:
+        embedder_name = None
+        print("Model name not specified") 
     
-        if embedder_name == 'intfloat/multilingual-e5-large':
-            embedder_dimension = 1024
-        elif embedder_name == 'all-MiniLM-L6-v2':
-            embedder_dimension = 384
-        else:
-            try:
-                embedder_dimension=int(param['options']['params']['embedder_dimension'])
-            except:
-                embedder_dimension=384
-            
-        if service == "huggingface" and use_local:
-            embedder_name = f'/srv/app/model/data/{embedder_name}'
-            print("Using local embedding model checkpoints") 
-    else:
-        try:
-            embedder_dimension=int(param['options']['params']['embedder_dimension'])
-        except:
-            cols = {"Results": ["Please specify the embedder_dimension parameter for the embedding model dimensions"]}
-            returns = pd.DataFrame(data=cols)
-            return returns
+    try:
+        embedder_dimension=int(param['options']['params']['embedder_dimension'])
+    except:
+        embedder_dimension=None
+        print("Model dimension not specified") 
 
     try:
-        if service == "huggingface" or service == "ollama":
-            embedder, m = create_embedding_model(service=service, model=embedder_name)
-        else:
-            embedder, m = create_embedding_model(service=service)
+        embedder, output_dims, m = create_embedding_model(service=service, model=embedder_name, use_local=use_local)
 
         if embedder is not None:
             print(m)
@@ -298,6 +259,8 @@ def compute(model,df,param):
             cols = {"Results": [f"ERROR in embedding model loading: {m}. "]}
             returns = pd.DataFrame(data=cols)
             return returns
+        if output_dims:
+            embedder_dimension = output_dims 
     except Exception as e:
         cols = {"Results": [f"Failed to initiate embedding model. ERROR: {e}"]}
         returns = pd.DataFrame(data=cols)
