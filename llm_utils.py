@@ -100,10 +100,10 @@ def create_embedding_model(service=None, model=None, use_local=0):
                 emb_config_list.remove(emb_config_item)
         if not success:
             err = f"Service {service} is not configured. Please configure the service."
-            return None, err
+            return None, None, err
     else:
         err = f"Service {service} is not supported. Please choose from {str(service_list)}."
-        return None, err
+        return None, None, err
 
     # The key for model name differs in these two service groups
     if service in ['huggingface','ollama','bedrock','gemini']:
