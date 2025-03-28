@@ -21,8 +21,6 @@ from pymilvus import (
 import llama_index
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document, StorageContext, ServiceContext
 from llama_index.vector_stores.milvus import MilvusVectorStore
-from llama_index.llms.ollama import Ollama
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 import textwrap
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.core import ChatPromptTemplate
@@ -200,8 +198,6 @@ def fit(model,df,param):
 # In[4]:
 
 
-# apply your model
-# returns the calculated results
 def apply(model,df,param):
     try:
         query = param['options']['params']['prompt'].strip('\"')
@@ -229,17 +225,14 @@ def apply(model,df,param):
     except:
         service = "ollama"
         print("Using default Ollama LLM service.")
+
+    try:
+        model_name = param['options']['params']['model_name'].strip("\"")
+    except:
+        model_name = None
+        print("No model name specified")
         
-    if service == "ollama": 
-        try:
-            model_name = param['options']['params']['model_name'].strip("\"")
-        except:
-            cols={'Message': ["ERROR: Please make sure you set the parameter \'model_name\'"]}
-            returns=pd.DataFrame(data=cols)
-            return returns
-        llm, m = create_llm(service='ollama', model=model_name)
-    else:
-        llm, m = create_llm(service=service)
+    llm, m = create_llm(service=service, model=model_name)
 
     if llm is None:
         cols={'Message': [m]}
@@ -322,19 +315,26 @@ def compute(model,df,param):
         tool_list.append(search_splunk_tool)
     if func2:
         tool_list.append(search_record_from_vector_db_tool)
-    
+
     try:
-        model = param['options']['params']['model_name'].strip('\"')
+        service = param['options']['params']['llm_service'].strip("\"")
+        print(f"Using {service} LLM service.")
     except:
-        result = pd.DataFrame({'Message': "ERROR: Please specify a model_name."})
-        return result
-    
-    url = "http://ollama:11434"
+        service = "ollama"
+        print("Using default Ollama LLM service.")
+
     try:
-        llm = Ollama(model=model, base_url=url, request_timeout=6000.0)
-    except Exception as e:
-        result = pd.DataFrame({'Message': f"Failed to load LLM model. ERROR: {e}"})
-        return result
+        model_name = param['options']['params']['model_name'].strip("\"")
+    except:
+        model_name = None
+        print("No model name specified")
+        
+    llm, m = create_llm(service=service, model=model_name)
+
+    if llm is None:
+        cols={'Message': [m]}
+        returns=pd.DataFrame(data=cols)
+        return returns
 
     
     worker = ReActAgentWorker.from_tools(tool_list, llm=llm)
