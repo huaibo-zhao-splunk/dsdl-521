@@ -11,18 +11,9 @@ import json
 import numpy as np
 import pandas as pd
 import os
-import pymilvus
-from pymilvus import (
-    connections,
-    utility,
-    FieldSchema, CollectionSchema, DataType,
-    Collection,
-)
 import llama_index
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document, StorageContext, ServiceContext, Settings
 from llama_index.vector_stores.milvus import MilvusVectorStore
-from llama_index.llms.ollama import Ollama
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 import textwrap
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.core import ChatPromptTemplate
@@ -31,7 +22,10 @@ from app.model.llm_utils import create_llm, create_embedding_model
 # ...
 # global constants
 MODEL_DIRECTORY = "/srv/app/model/data/"
-LLM_ENDPOINT = "http://ollama:11434"
+try:
+    MILVUS_ENDPOINT = json.loads(os.environ['llm_config'])['vector_db']['milvus'][0]['uri']
+except:
+    MILVUS_ENDPOINT = "http://milvus-standalone:19530"
 
 
 
@@ -93,8 +87,6 @@ def fit(model,df,param):
 # In[20]:
 
 
-# apply your model
-# returns the calculated results
 def apply(model,df,param):
     X = df["query"].values.tolist()
 
@@ -116,68 +108,48 @@ def apply(model,df,param):
     except:
         llm_service = "ollama"
         print("Using default Ollama LLM service.")
-        
-    if embedder_service == "huggingface" or embedder_service == "ollama":
-        try:
-            use_local= int(param['options']['params']['use_local'])
-        except:
-            use_local = 0
-            print("Downloading embedding model by default") 
-            
-        try:
-            embedder_name=param['options']['params']['embedder_name'].strip('\"')
-        except:
-            embedder_name = 'all-MiniLM-L6-v2'
-            print("Using all-MiniLM-L6-v2 as embedding model by default") 
-    
-        if embedder_name == 'intfloat/multilingual-e5-large':
-            embedder_dimension = 1024
-        elif embedder_name == 'all-MiniLM-L6-v2':
-            embedder_dimension = 384
-        else:
-            try:
-                embedder_dimension=int(param['options']['params']['embedder_dimension'])
-            except:
-                embedder_dimension=384
-            
-        if embedder_service == "huggingface" and use_local:
-            embedder_name = f'/srv/app/model/data/{embedder_name}'
-            print("Using local embedding model checkpoints") 
-    else:
-        try:
-            embedder_dimension=int(param['options']['params']['embedder_dimension'])
-        except:
-            cols = {"Results": ["Please specify the embedder_dimension parameter for the embedding model dimensions"]}
-            returns = pd.DataFrame(data=cols)
-            return returns
 
     try:
-        if embedder_service == "huggingface" or embedder_service == "ollama":
-            embedder, m = create_embedding_model(service=embedder_service, model=embedder_name)
-        else:
-            embedder, m = create_embedding_model(service=embedder_service)
+        use_local= int(param['options']['params']['use_local'])
+    except:
+        use_local = 0
+        print("Not using embedding local model") 
+            
+    try:
+        embedder_name=param['options']['params']['embedder_name'].strip('\"')
+    except:
+        embedder_name = None
+        print("Embedding model name not specified") 
+    
+    try:
+        embedder_dimension=int(param['options']['params']['embedder_dimension'])
+    except:
+        embedder_dimension=None
+        print("Embedding dimension not specified") 
 
+    try:
+        model_name = param['options']['params']['model_name'].strip("\"")
+    except:
+        model_name = None
+        print("LLM model name not specified")
+
+    try:
+        embedder, output_dims, m = create_embedding_model(service=embedder_service, model=embedder_name, use_local=use_local)
         if embedder is not None:
             print(m)
         else:
             cols = {"Results": [f"ERROR in embedding model loading: {m}. "]}
             returns = pd.DataFrame(data=cols)
             return returns
+        if output_dims:
+            embedder_dimension = output_dims
     except Exception as e:
         cols = {"Results": [f"Failed to initiate embedding model. ERROR: {e}"]}
         returns = pd.DataFrame(data=cols)
         return returns
 
-    if llm_service == "ollama": 
-        try:
-            model_name = param['options']['params']['model_name'].strip("\"")
-        except:
-            cols={'Result': ["ERROR: Please make sure you set the parameter \'model_name\'"]}
-            returns=pd.DataFrame(data=cols)
-            return returns
-        llm, m = create_llm(service='ollama', model=model_name)
-    else:
-        llm, m = create_llm(service=llm_service)
+    
+    llm, m = create_llm(service=llm_service, model=model_name)
 
     if llm is None:
         cols={'Result': [m]}
@@ -243,9 +215,9 @@ def apply(model,df,param):
         return result
     try:
         if d_type == "Documents":
-            vector_store = MilvusVectorStore(uri="http://milvus-standalone:19530", token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+            vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
         else:
-            vector_store = MilvusVectorStore(uri="http://milvus-standalone:19530", token="", collection_name=collection_name, embedding_field='embeddings', text_key='label', dim=embedder_dimension, overwrite=False)
+            vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, embedding_field='embeddings', text_key='label', dim=embedder_dimension, overwrite=False)
         index = VectorStoreIndex.from_vector_store(
            vector_store=vector_store
         )
@@ -349,68 +321,48 @@ def compute(model,df,param):
     except:
         llm_service = "ollama"
         print("Using default Ollama LLM service.")
-        
-    if embedder_service == "huggingface" or embedder_service == "ollama":
-        try:
-            use_local= int(param['options']['params']['use_local'])
-        except:
-            use_local = 0
-            print("Downloading embedding model by default") 
-            
-        try:
-            embedder_name=param['options']['params']['embedder_name'].strip('\"')
-        except:
-            embedder_name = 'all-MiniLM-L6-v2'
-            print("Using all-MiniLM-L6-v2 as embedding model by default") 
-    
-        if embedder_name == 'intfloat/multilingual-e5-large':
-            embedder_dimension = 1024
-        elif embedder_name == 'all-MiniLM-L6-v2':
-            embedder_dimension = 384
-        else:
-            try:
-                embedder_dimension=int(param['options']['params']['embedder_dimension'])
-            except:
-                embedder_dimension=384
-            
-        if embedder_service == "huggingface" and use_local:
-            embedder_name = f'/srv/app/model/data/{embedder_name}'
-            print("Using local embedding model checkpoints") 
-    else:
-        try:
-            embedder_dimension=int(param['options']['params']['embedder_dimension'])
-        except:
-            cols = {"Results": ["Please specify the embedder_dimension parameter for the embedding model dimensions"]}
-            returns = pd.DataFrame(data=cols)
-            return returns
 
     try:
-        if embedder_service == "huggingface" or embedder_service == "ollama":
-            embedder, m = create_embedding_model(service=embedder_service, model=embedder_name)
-        else:
-            embedder, m = create_embedding_model(service=embedder_service)
+        use_local= int(param['options']['params']['use_local'])
+    except:
+        use_local = 0
+        print("Not using embedding local model") 
+            
+    try:
+        embedder_name=param['options']['params']['embedder_name'].strip('\"')
+    except:
+        embedder_name = None
+        print("Embedding model name not specified") 
+    
+    try:
+        embedder_dimension=int(param['options']['params']['embedder_dimension'])
+    except:
+        embedder_dimension=None
+        print("Embedding dimension not specified") 
 
+    try:
+        model_name = param['options']['params']['model_name'].strip("\"")
+    except:
+        model_name = None
+        print("LLM model name not specified")
+
+    try:
+        embedder, output_dims, m = create_embedding_model(service=embedder_service, model=embedder_name, use_local=use_local)
         if embedder is not None:
             print(m)
         else:
             cols = {"Results": [f"ERROR in embedding model loading: {m}. "]}
             returns = pd.DataFrame(data=cols)
             return returns
+        if output_dims:
+            embedder_dimension = output_dims
     except Exception as e:
         cols = {"Results": [f"Failed to initiate embedding model. ERROR: {e}"]}
         returns = pd.DataFrame(data=cols)
         return returns
 
-    if llm_service == "ollama": 
-        try:
-            model_name = param['options']['params']['model_name'].strip("\"")
-        except:
-            cols={'Result': ["ERROR: Please make sure you set the parameter \'model_name\'"]}
-            returns=pd.DataFrame(data=cols)
-            return returns
-        llm, m = create_llm(service='ollama', model=model_name)
-    else:
-        llm, m = create_llm(service=llm_service)
+    
+    llm, m = create_llm(service=llm_service, model=model_name)
 
     if llm is None:
         cols={'Result': [m]}
@@ -476,9 +428,9 @@ def compute(model,df,param):
         return result
     try:
         if d_type == "Documents":
-            vector_store = MilvusVectorStore(uri="http://milvus-standalone:19530", token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+            vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
         else:
-            vector_store = MilvusVectorStore(uri="http://milvus-standalone:19530", token="", collection_name=collection_name, embedding_field='embeddings', text_key='label', dim=embedder_dimension, overwrite=False)
+            vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, embedding_field='embeddings', text_key='label', dim=embedder_dimension, overwrite=False)
         index = VectorStoreIndex.from_vector_store(
            vector_store=vector_store
         )
