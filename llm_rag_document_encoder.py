@@ -11,19 +11,10 @@ import json
 import numpy as np
 import pandas as pd
 import os
-import pymilvus
-from pymilvus import (
-    connections,
-    utility,
-    FieldSchema, CollectionSchema, DataType,
-    Collection,
-)
 import llama_index
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document, StorageContext, ServiceContext, Settings
 from llama_index.readers.file import DocxReader, CSVReader, PDFReader, PptxReader, XMLReader, IPYNBReader 
 from llama_index.vector_stores.milvus import MilvusVectorStore
-from llama_index.llms.ollama import Ollama
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 import textwrap
 from app.model.llm_utils import create_llm, create_embedding_model
 # ...
@@ -91,8 +82,6 @@ def fit(model,df,param):
 # In[22]:
 
 
-# apply your model
-# returns the calculated results
 def apply(model,df,param):
     # Datapath Example: '/srv/notebooks/data/splunk_doc/'
     try:
@@ -111,8 +100,8 @@ def apply(model,df,param):
     try:
         embedder_dimension = int(param['options']['params']['embedder_dimension'])
     except:
-        embedder_dimension = 384
-        print("embedder_dimension not specified. Use 384 by default.")
+        embedder_dimension = None
+        print("embedder_dimension not specified.")
         
     try:
         collection_name = param['options']['params']['collection_name'].strip('\"')
@@ -120,31 +109,17 @@ def apply(model,df,param):
         collection_name = "default-doc-collection"
         print("collection_name not specified. Use default-doc-collection by default.")
         
-    if service == "huggingface" or service == "ollama":
-        try:
-            embedder_name = param['options']['params']['embedder_name'].strip('\"')
-        except:
-            embedder_name = 'all-MiniLM-L6-v2'
-            print("embedder_name not specified. Use all-MiniLM-L6-v2 by default.")
+    try:
+        embedder_name = param['options']['params']['embedder_name'].strip('\"')
+    except:
+        embedder_name = None
+        print("embedder_name not specified.")
 
-        try:
-            use_local = int(param['options']['params']['use_local'])
-        except:
-            use_local = 0
-            print("download Huggingface embedder model by default.")
-
-        # Dimension checking for default embedders
-        if embedder_name == 'intfloat/multilingual-e5-large':
-            embedder_dimension = 1024
-        elif embedder_name == 'all-MiniLM-L6-v2':
-            embedder_dimension = 384
-        else:
-            embedder_dimension = int(embedder_dimension)
-         
-        # Using local embedder checkpoints
-        if use_local:
-            embedder_name = f'/srv/app/model/data/{embedder_name}'
-            print("Using local embedding model checkpoints")
+    try:
+        use_local = int(param['options']['params']['use_local'])
+    except:
+        use_local = 0
+        print("Not using local model.")
         
     # To support pptx files, huggingface extractor needs to be downloaded. Skipping support for this version
     # Special parser for CSV data
@@ -159,18 +134,15 @@ def apply(model,df,param):
     except Exception as e:
         documents = None
         message = f"ERROR in directory loading: {e} "
-    # Create Transformers embedding model 
-    ## TODO: add local loading option
+
     try:
-        if service == "huggingface" or service == "ollama":
-            embedder, m = create_embedding_model(service=service, model=embedder_name)
-        else:
-            embedder, m = create_embedding_model(service=service)
-        # transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
+        embedder, output_dims, m = create_embedding_model(service=service, model=embedder_name, use_local=use_local)
         if embedder is not None:
             print(m)
         else:
             message = f"ERROR in embedding model loading: {m}. "
+        if output_dims:
+            embedder_dimension = output_dims
     except Exception as e:
         embedder = None
         message = f"ERROR in embedding model loading: {e}. Check if the model name is correct. If you selected Yes for use local embedder, make sure you have pulled the embedding model to local."
@@ -264,8 +236,8 @@ def compute(model,df,param):
     try:
         embedder_dimension = int(param['options']['params']['embedder_dimension'])
     except:
-        embedder_dimension = 384
-        print("embedder_dimension not specified. Use 384 by default.")
+        embedder_dimension = None
+        print("embedder_dimension not specified.")
         
     try:
         collection_name = param['options']['params']['collection_name'].strip('\"')
@@ -273,31 +245,17 @@ def compute(model,df,param):
         collection_name = "default-doc-collection"
         print("collection_name not specified. Use default-doc-collection by default.")
         
-    if service == "huggingface" or service == "ollama":
-        try:
-            embedder_name = param['options']['params']['embedder_name'].strip('\"')
-        except:
-            embedder_name = 'all-MiniLM-L6-v2'
-            print("embedder_name not specified. Use all-MiniLM-L6-v2 by default.")
+    try:
+        embedder_name = param['options']['params']['embedder_name'].strip('\"')
+    except:
+        embedder_name = None
+        print("embedder_name not specified.")
 
-        try:
-            use_local = int(param['options']['params']['use_local'])
-        except:
-            use_local = 0
-            print("download Huggingface embedder model by default.")
-
-        # Dimension checking for default embedders
-        if embedder_name == 'intfloat/multilingual-e5-large':
-            embedder_dimension = 1024
-        elif embedder_name == 'all-MiniLM-L6-v2':
-            embedder_dimension = 384
-        else:
-            embedder_dimension = int(embedder_dimension)
-         
-        # Using local embedder checkpoints
-        if use_local:
-            embedder_name = f'/srv/app/model/data/{embedder_name}'
-            print("Using local embedding model checkpoints")
+    try:
+        use_local = int(param['options']['params']['use_local'])
+    except:
+        use_local = 0
+        print("Not using local model.")
         
     # To support pptx files, huggingface extractor needs to be downloaded. Skipping support for this version
     # Special parser for CSV data
@@ -312,18 +270,15 @@ def compute(model,df,param):
     except Exception as e:
         documents = None
         message = f"ERROR in directory loading: {e} "
-    # Create Transformers embedding model 
-    ## TODO: add local loading option
+
     try:
-        if service == "huggingface" or service == "ollama":
-            embedder, m = create_embedding_model(service=service, model=embedder_name)
-        else:
-            embedder, m = create_embedding_model(service=service)
-        # transformer_embedder = HuggingFaceEmbedding(model_name=embedder_name)
+        embedder, output_dims, m = create_embedding_model(service=service, model=embedder_name, use_local=use_local)
         if embedder is not None:
             print(m)
         else:
             message = f"ERROR in embedding model loading: {m}. "
+        if output_dims:
+            embedder_dimension = output_dims
     except Exception as e:
         embedder = None
         message = f"ERROR in embedding model loading: {e}. Check if the model name is correct. If you selected Yes for use local embedder, make sure you have pulled the embedding model to local."
