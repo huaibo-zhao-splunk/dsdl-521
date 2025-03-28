@@ -20,7 +20,11 @@ from app.model.llm_utils import create_llm, create_embedding_model
 # ...
 # global constants
 MODEL_DIRECTORY = "/srv/app/model/data/"
-MILVUS_ENDPOINT = "http://milvus-standalone:19530"
+
+try:
+    MILVUS_ENDPOINT = json.loads(os.environ['llm_config'])['vector_db']['milvus'][0]['uri']
+except:
+    MILVUS_ENDPOINT = "http://milvus-standalone:19530"
 
 
 
