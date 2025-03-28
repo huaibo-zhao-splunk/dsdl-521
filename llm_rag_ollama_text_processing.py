@@ -108,16 +108,13 @@ def apply(model,df,param):
         service = "ollama"
         print("Using default Ollama LLM service.")
         
-    if service == "ollama": 
-        try:
-            model_name = param['options']['params']['model_name'].strip("\"")
-        except:
-            cols={'Result': ["ERROR: Please make sure you set the parameter \'model_name\'"], 'Duration': ["ERROR"]}
-            returns=pd.DataFrame(data=cols)
-            return returns
-        llm, m = create_llm(service='ollama', model=model_name)
-    else:
-        llm, m = create_llm(service=service)
+    try:
+        model_name = param['options']['params']['model_name'].strip("\"")
+    except:
+        model_name = None
+        print("No model name specified")
+
+    llm, m = create_llm(service=service, model=model_name)
 
     if llm is None:
         cols={'Result': [m], 'Duration': ["ERROR"]}
@@ -216,16 +213,13 @@ def compute(model,df,param):
         service = "ollama"
         print("Using default Ollama LLM service.")
         
-    if service == "ollama": 
-        try:
-            model_name = param['options']['params']['model_name'].strip("\"")
-        except:
-            cols={'Result': ["ERROR: Please make sure you set the parameter \'model_name\'"], 'Duration': ["ERROR"]}
-            returns=pd.DataFrame(data=cols)
-            return returns
-        llm, m = create_llm(service='ollama', model=model_name)
-    else:
-        llm, m = create_llm(service=service)
+    try:
+        model_name = param['options']['params']['model_name'].strip("\"")
+    except:
+        model_name = None
+        print("No model name specified")
+
+    llm, m = create_llm(service=service, model=model_name)
 
     if llm is None:
         cols={'Result': [m], 'Duration': ["ERROR"]}
