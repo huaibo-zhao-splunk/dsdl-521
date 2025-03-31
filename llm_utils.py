@@ -11,6 +11,11 @@ from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.embeddings.bedrock import BedrockEmbedding
 from llama_index.embeddings.gemini import GeminiEmbedding
 
+from llama_index.vector_stores.milvus import MilvusVectorStore
+from llama_index.vector_stores.pinecone import PineconeVectorStore
+from pinecone import Pinecone, ServerlessSpec
+from llama_index_alloydb_pg import AlloyDBEngine, AlloyDBVectorStore, AlloyDBDocumentStore, AlloyDBIndexStore
+
 import json
 import os
 
@@ -179,4 +184,88 @@ def create_embedding_model(service=None, model=None, use_local=0):
             
     message = f"Successfully created Embedding model object from {service}"
     return embedding_model, emb_dims, message
+
+def create_vector_db(service=None, collection_name=None, dim=None):
+    config = json.loads(os.environ['llm_config'])
+    service_list = ['milvus','pinecone','alloydb']
+
+    if service in service_list:
+        vec_config_list = config['vector_db'][service]
+        print(f"Initializing vector database object from {service}")
+        success = 0
+        for vec_config_item in vec_config_list:
+            if vec_config_item['is_configured']:
+                success = 1
+            else:
+                vec_config_list.remove(vec_config_item)
+        if not success:
+            err = f"Service {service} is not configured. Please configure the service."
+            return None, err
+    else:
+        err = f"Service {service} is not supported. Please choose from {str(service_list)}."
+        return None, err
+
+    vec_config_item = dict(vec_config_list[0])
+    del vec_config_item["is_configured"]
+
+    dim = int(dim)
+
+    if service == 'milvus':
+        try:
+            vector_store = MilvusVectorStore(**vec_config_item, collection_name=collection_name, dim=dim, overwrite=False)
+        except Exception as e:
+            err = f"Failed at creating vector database object from {service}. Details: {e}."
+            return None, err    
+            
+    elif service == 'pinecone':
+        try:
+            api_key = vec_config_item['api_key']
+        except:
+            api_key = None 
+        try:
+            cloud = vec_config_item['cloud']
+        except:
+            cloud = None
+        try:
+            region = vec_config_item['region']
+        except:
+            region = None
+        try:
+            metric = vec_config_item['metric']
+        except:
+            metric = "dotproduct"
+        try:
+            pc = Pinecone(api_key=api_key)
+            pc.create_index(
+                name=collection_name,
+                dimension=dim,
+                metric=metric,
+                spec=ServerlessSpec(cloud=cloud, region=region),
+            )
+            pinecone_index = pc.Index(collection_name)
+
+            vector_store = PineconeVectorStore(
+                pinecone_index=pinecone_index,
+            )
+            
+        except Exception as e:
+            err = f"Failed at creating vector database object from {service}. Details: {e}."
+            return None, err
+
+    else:
+        try:
+            engine = AlloyDBEngine.afrom_instance(**vec_config_item)
+            engine.ainit_vector_store_table(
+                table_name=collection_name,
+                vector_size=dim,
+            )
+            vector_store = AlloyDBVectorStore.create(
+                engine=engine,
+                table_name=collection_name,
+            )         
+        except Exception as e:
+            err = f"Failed at creating Embedding model object from {service}. Details: {e}."
+            return None, err
     
+    message = f"Successfully created vector database object from {service}"
+    return vector_store, message
