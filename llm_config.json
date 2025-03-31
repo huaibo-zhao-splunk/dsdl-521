@@ -88,6 +88,23 @@
             "is_configured": 1,
             "uri": "http://milvus-standalone:19530",
             "token": ""
+        }],
+        "pinecone": [{
+            "is_configured": 0,
+            "api_key": null,
+            "cloud": null,
+            "region": null,
+            "metric": null,
+        }],
+        "alloydb": [{
+            "is_configured": 0,
+            "project_id": null,
+            "region": null,
+            "cluster": null,
+            "instance": null,
+            "database": null,
+            "user": null,
+            "password": null
         }]
     },
     "graph_db": {
@@ -97,6 +114,13 @@
             "password": null,
             "url": null,
             "database": null
+        }],
+        "dgraph": [{
+            "is_configured": 0,
+            "username": null,
+            "password": null,
+            "url": null,
+            "namespace": null
         }]
     }
 }
