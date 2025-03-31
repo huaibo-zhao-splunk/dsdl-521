@@ -54,6 +54,9 @@ def create_llm(service=None, model=None):
     
     if service == 'ollama':
         try:
+            if model:
+                # Use user-specified model in case of Ollama
+                llm_config_item['model'] = model
             llm = Ollama(**llm_config_item, request_timeout=6000.0)
         except Exception as e:
             err = f"Failed at creating LLM object from {service}. Details: {e}."
@@ -139,6 +142,9 @@ def create_embedding_model(service=None, model=None, use_local=0):
     del emb_config_item["is_configured"]
     
     if service == 'huggingface':
+        if model:
+            # use user-specified model in case of huggingface
+            emb_config_item[model_key] = model
         if use_local:
             emb_config_item[model_key] = f"/srv/app/model/data/{emb_config_item[model_key]}"
         try:
@@ -148,6 +154,9 @@ def create_embedding_model(service=None, model=None, use_local=0):
             return None, None, err    
             
     elif service == 'ollama':
+        if model:
+            # use user-specified model in case of ollama
+            emb_config_item[model_key] = model
         try:
             embedding_model = OllamaEmbedding(**emb_config_item)
         except Exception as e:
