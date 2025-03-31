@@ -3,7 +3,7 @@
 
 
     
-# In[1]:
+# In[3]:
 
 
 # this definition exposes all python module imports that should be available in all subsequent commands
@@ -14,14 +14,10 @@ import os
 import time
 from llama_index.core import VectorStoreIndex, Document, StorageContext, ServiceContext, Settings
 from llama_index.vector_stores.milvus import MilvusVectorStore
-from app.model.llm_utils import create_llm, create_embedding_model
+from app.model.llm_utils import create_llm, create_embedding_model, create_vector_db
 # ...
 # global constants
 MODEL_DIRECTORY = "/srv/app/model/data/"
-try:
-    MILVUS_ENDPOINT = json.loads(os.environ['llm_config'])['vector_db']['milvus'][0]['uri']
-except:
-    MILVUS_ENDPOINT = "http://milvus-standalone:19530"
 
 
 
@@ -94,6 +90,13 @@ def apply(model,df,param):
         return pd.DataFrame(data=result_dict)
 
     try:
+        vec_service = param['options']['params']['vectordb_service'].strip('\"')
+        print(f"Using {vec_service} vector database service")
+    except:
+        vec_service = "milvus"
+        print("Using default Milvus vector database service")
+    
+    try:
         service = param['options']['params']['embedder_service'].strip('\"')
         print(f"Using {service} embedding service")
     except:
@@ -176,7 +179,10 @@ def apply(model,df,param):
         Settings.llm = None
         Settings.embed_model = embedder
         # similarity_metric set to default value: IP (inner-product)
-        vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+        vector_store, v_m = create_vector_db(service=vec_service, collection_name=collection_name, dim=embedder_dimension)
+        if vector_store is None:
+            result_dict["message"] = f"Failed at creating vectordb object. ERROR:{v_m}"
+            return pd.DataFrame(data=result_dict)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
         VectorStoreIndex.from_documents(
@@ -243,6 +249,13 @@ def compute(model,df,param):
         return pd.DataFrame(data=result_dict)
 
     try:
+        vec_service = param['options']['params']['vectordb_service'].strip('\"')
+        print(f"Using {vec_service} vector database service")
+    except:
+        vec_service = "milvus"
+        print("Using default Milvus vector database service")
+    
+    try:
         service = param['options']['params']['embedder_service'].strip('\"')
         print(f"Using {service} embedding service")
     except:
@@ -325,7 +338,10 @@ def compute(model,df,param):
         Settings.llm = None
         Settings.embed_model = embedder
         # similarity_metric set to default value: IP (inner-product)
-        vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+        vector_store, v_m = create_vector_db(service=vec_service, collection_name=collection_name, dim=embedder_dimension)
+        if vector_store is None:
+            result_dict["message"] = f"Failed at creating vectordb object. ERROR:{v_m}"
+            return pd.DataFrame(data=result_dict)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
         VectorStoreIndex.from_documents(

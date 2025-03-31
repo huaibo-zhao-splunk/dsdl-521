@@ -3,7 +3,7 @@
 
 
     
-# In[1]:
+# In[2]:
 
 
 # this definition exposes all python module imports that should be available in all subsequent commands
@@ -17,15 +17,11 @@ from llama_index.vector_stores.milvus import MilvusVectorStore
 import textwrap
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.core import ChatPromptTemplate
-from app.model.llm_utils import create_llm, create_embedding_model
+from app.model.llm_utils import create_llm, create_embedding_model, create_vector_db
 
 # ...
 # global constants
 MODEL_DIRECTORY = "/srv/app/model/data/"
-try:
-    MILVUS_ENDPOINT = json.loads(os.environ['llm_config'])['vector_db']['milvus'][0]['uri']
-except:
-    MILVUS_ENDPOINT = "http://milvus-standalone:19530"
 
 
 
@@ -95,6 +91,13 @@ def apply(model,df,param):
     # Manually change d_type to Logs to utilize the legacy code remained in this notebook.
     d_type = "Documents"
 
+    try:
+        vec_service = param['options']['params']['vectordb_service'].strip('\"')
+        print(f"Using {vec_service} vector database service")
+    except:
+        vec_service = "milvus"
+        print("Using default Milvus vector database service")
+        
     try:
         embedder_service = param['options']['params']['embedder_service'].strip('\"')
         print(f"Using {embedder_service} embedding service")
@@ -215,7 +218,11 @@ def apply(model,df,param):
         return result
     try:
         if d_type == "Documents":
-            vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+            vector_store, v_m = create_vector_db(service=vec_service, collection_name=collection_name, dim=embedder_dimension)
+            if vector_store is None:
+                cols = {"Response": [f"ERROR: Could not connect to vectordb. ERROR: {v_m}"], "References": ["ERROR"]}
+                result = pd.DataFrame(data=cols)
+                return result
         else:
             vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, embedding_field='embeddings', text_key='label', dim=embedder_dimension, overwrite=False)
         index = VectorStoreIndex.from_vector_store(
@@ -309,6 +316,13 @@ def compute(model,df,param):
     d_type = "Documents"
 
     try:
+        vec_service = param['options']['params']['vectordb_service'].strip('\"')
+        print(f"Using {vec_service} vector database service")
+    except:
+        vec_service = "milvus"
+        print("Using default Milvus vector database service")
+
+    try:
         embedder_service = param['options']['params']['embedder_service'].strip('\"')
         print(f"Using {embedder_service} embedding service")
     except:
@@ -428,7 +442,11 @@ def compute(model,df,param):
         return result
     try:
         if d_type == "Documents":
-            vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+            vector_store, v_m = create_vector_db(service=vec_service, collection_name=collection_name, dim=embedder_dimension)
+            if vector_store is None:
+                cols = {"Response": [f"ERROR: Could not connect to vectordb. ERROR: {v_m}"], "References": ["ERROR"]}
+                result = pd.DataFrame(data=cols)
+                return result
         else:
             vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, embedding_field='embeddings', text_key='label', dim=embedder_dimension, overwrite=False)
         index = VectorStoreIndex.from_vector_store(

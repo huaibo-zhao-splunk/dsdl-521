@@ -17,14 +17,10 @@ from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilter
 from llama_index.core.bridge.pydantic import BaseModel, StrictFloat, StrictInt, StrictStr
 from llama_index.core.schema import BaseComponent, BaseNode, TextNode
-from app.model.llm_utils import create_llm, create_embedding_model
+from app.model.llm_utils import create_llm, create_embedding_model, create_vector_db
 # ...
 # global constants
 MODEL_DIRECTORY = "/srv/app/model/data/"
-try:
-    MILVUS_ENDPOINT = json.loads(os.environ['llm_config'])['vector_db']['milvus'][0]['uri']
-except:
-    MILVUS_ENDPOINT = "http://milvus-standalone:19530"
 
 
 
@@ -33,7 +29,7 @@ except:
 
 
     
-# In[3]:
+# In[2]:
 
 
 # this cell is not executed from MLTK and should only be used for staging data into the notebook environment
@@ -51,7 +47,7 @@ def stage(name):
 
 
     
-# In[3]:
+# In[4]:
 
 
 # initialize your model
@@ -85,10 +81,17 @@ def fit(model,df,param):
 
 
     
-# In[13]:
+# In[9]:
 
 
 def apply(model,df,param):
+    try:
+        vec_service = param['options']['params']['vectordb_service'].strip('\"')
+        print(f"Using {vec_service} vector database service")
+    except:
+        vec_service = "milvus"
+        print("Using default Milvus vector database service")
+        
     try:
         service = param['options']['params']['embedder_service'].strip('\"')
         print(f"Using {service} embedding service")
@@ -151,7 +154,11 @@ def apply(model,df,param):
     try:
         Settings.llm = None
         Settings.embed_model = embedder
-        vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+        vector_store, v_m = create_vector_db(service=vec_service, collection_name=collection_name, dim=embedder_dimension)
+        if vector_store is None:
+            cols = {"Results": [f"Could not connect to vectordb. ERROR: {v_m}"]}
+            result = pd.DataFrame(data=cols)
+            return result
         index = VectorStoreIndex.from_vector_store(
            vector_store=vector_store
         )
@@ -227,7 +234,14 @@ def summary(model=None):
     returns = {"version": {"numpy": np.__version__, "pandas": pd.__version__} }
     return returns
 
-def apply(model,df,param):
+def compute(model,df,param):
+    try:
+        vec_service = param['options']['params']['vectordb_service'].strip('\"')
+        print(f"Using {vec_service} vector database service")
+    except:
+        vec_service = "milvus"
+        print("Using default Milvus vector database service")
+    
     try:
         service = param['options']['params']['embedder_service'].strip('\"')
         print(f"Using {service} embedding service")
@@ -290,7 +304,11 @@ def apply(model,df,param):
     try:
         Settings.llm = None
         Settings.embed_model = embedder
-        vector_store = MilvusVectorStore(uri=MILVUS_ENDPOINT, token="", collection_name=collection_name, dim=embedder_dimension, overwrite=False)
+        vector_store, v_m = create_vector_db(service=vec_service, collection_name=collection_name, dim=embedder_dimension)
+        if vector_store is None:
+            cols = {"Results": [f"Could not connect to vectordb. ERROR: {v_m}"]}
+            result = pd.DataFrame(data=cols)
+            return result
         index = VectorStoreIndex.from_vector_store(
            vector_store=vector_store
         )
