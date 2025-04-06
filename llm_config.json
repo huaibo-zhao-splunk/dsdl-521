@@ -94,7 +94,7 @@
             "api_key": null,
             "cloud": null,
             "region": null,
-            "metric": null,
+            "metric": null
         }],
         "alloydb": [{
             "is_configured": 0,
